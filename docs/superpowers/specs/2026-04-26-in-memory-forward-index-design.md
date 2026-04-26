@@ -8,7 +8,7 @@ Build an embedded C++17 library that serves low-latency in-memory forward lookup
 uint64_t primary_key -> structured value
 ```
 
-The component is optimized for high-concurrency read-heavy workloads. Reads must observe strict snapshot semantics: each query sees either one complete old version or one complete new version, never a partially updated state.
+The component is optimized for high-concurrency read-heavy workloads. Kafka upserts must become visible to subsequent reads immediately after the SDK consumes and publishes them locally. Reads must still observe a complete row: a lookup sees either the previous full row or the new full row, never a partially applied value.
 
 The value schema is fixed per schema version but can be hot-loaded at runtime. Schema evolution only supports adding and deleting fields. Existing field types cannot change, and field IDs are never reused.
 
@@ -17,72 +17,151 @@ The value schema is fixed per schema version but can be hot-loaded at runtime. S
 - The SDK does not deliver full artifacts to online machines.
 - The SDK does not expose a manual business-facing publish API.
 - The SDK does not provide index-level delete operations. Deletes are represented as normal upserted fields, such as `is_deleted`.
+- The first version does not provide global multi-key snapshot isolation across all shards. The core semantic is single-key lookup consistency.
 - The first version does not optimize for field-scan workloads. The common path is point lookup followed by reading most or all fields.
 
-## High-Level Architecture
+## Core Architecture
+
+The index is sharded by primary key. Each shard can be loaded, compacted, and switched independently.
 
 ```text
 ForwardIndex
-  -> C++17 atomic_load/store protected shared_ptr<const SnapshotManifest>
+  -> ShardDirectory
+       -> C++17 atomic_load/store protected shared_ptr<const ShardState>[N]
 
-SnapshotManifest immutable
-  -> FullSnapshot immutable
-  -> MajorDeltaSnapshot immutable
-  -> MinorDeltaSnapshot immutable
-
-Background only
-  -> MutableDeltaBuffer
+ShardState published container
+  -> FullSnapshotView
+  -> CompactDeltaSnapshot
+  -> RealtimeDeltaAtomicTable mutable, read-optimized
+  -> schema/layout handles
 ```
 
-`ForwardIndex` owns the current immutable `SnapshotManifest`. Query threads pin the manifest once, then perform lookup against the immutable minor delta, major delta, and full snapshot. In C++17 this should be implemented with `std::atomic_load` and `std::atomic_store` free functions on a `std::shared_ptr`, or hidden behind a small holder class. The design should not rely on `std::atomic<std::shared_ptr<T>>`, which is a C++20 facility.
+`ShardDirectory` is an array of independently published shard pointers. In C++17, each pointer should be accessed through `std::atomic_load` and `std::atomic_store` free functions on `std::shared_ptr`, or hidden behind a small holder class. The design should not rely on `std::atomic<std::shared_ptr<T>>`, which is a C++20 facility.
 
-Kafka upserts are written only to `MutableDeltaBuffer`, which is never read by query threads. Periodically, the mutable buffer is frozen and merged into a new immutable minor delta. The index then publishes a new manifest with one atomic pointer swap.
-
-## Read Path
+The read path only touches one shard:
 
 ```text
 Find(primary_key)
-  -> acquire current SnapshotManifest
-  -> minor_delta.Find(primary_key)
-  -> major_delta.Find(primary_key)
+  -> shard_id = ShardFor(primary_key)
+  -> acquire current ShardState for shard_id
+  -> realtime_delta.Find(primary_key)
+  -> compact_delta.Find(primary_key)
   -> full_snapshot.Find(primary_key)
   -> return ValueView
 ```
 
-The read path takes no application-level mutex from the query thread's perspective because all data structures reachable from a manifest are immutable. The only synchronization on the read path is atomically acquiring the current shared manifest pointer and incrementing the shared pointer reference count.
+Each Kafka upsert is a complete row. A delta hit returns a full value, so the read path never merges fields from base and delta.
 
-Because Kafka messages contain whole-record upserts, a delta hit returns a complete row. The read path never merges fields from base and delta.
+## Consistency Model
 
-`ValueView` must keep the pinned manifest or snapshot handle alive so references into row arenas and dictionary pools remain valid for the full lifetime of the view.
+The index provides single-key snapshot semantics:
 
-## Snapshot Semantics
+- A lookup observes one shard state.
+- Within that shard, it sees either the old complete row or the new complete row.
+- A lookup never observes a partially encoded row.
+- Different shards may switch to a new full artifact at different times during a full update.
 
-Each query observes exactly one `SnapshotManifest`.
+This intentionally does not guarantee that a multi-key request across shards observes one global full version. That stronger guarantee would require a global manifest and would increase memory pressure during full updates.
+
+## Realtime Incremental Updates
+
+Kafka messages are whole-record upserts:
 
 ```text
-T0: current manifest = M1
-T1: background freezes Kafka buffer into MinorDelta'
-T2: background builds M2 = Full + Major + MinorDelta'
-T3: atomic current manifest = M2
+primary_key -> complete structured row
 ```
 
-Queries that pinned `M1` continue reading `M1`. Queries starting after `T3` read `M2`. No query observes a partially built delta or a mix of manifests.
+There is no index-level delete operation. A delete is represented by normal fields in the upserted row.
 
-## Storage Layout
-
-The primary storage is row-based because the dominant access pattern is fetching one record and reading most or all fields.
+The serving path uses a read-optimized mutable delta table:
 
 ```text
-Snapshot
-  -> PrimaryKeyIndex
-  -> RowArena
+RealtimeDeltaAtomicTable
+  -> sharded hash table
+  -> slot: primary_key -> atomic RowRef*
+  -> append-only row arena
+```
+
+Upsert publication:
+
+```text
+1. Decode and validate the Kafka row.
+2. Encode the complete row into an append-only row arena.
+3. Find or create the primary-key slot in the shard's realtime table.
+4. Release-store the new RowRef* into that slot.
+5. Commit Kafka offset only after local publication succeeds.
+```
+
+Subsequent reads can see the new row immediately after step 4. Old row memory is not reclaimed inline. Replaced rows stay in the append-only arena until the realtime table is rotated or compacted and reader epochs prove no query can still reference the old row.
+
+The realtime table should avoid application-level read locks. Writes may use shard-local locks or CAS during slot creation, but reads should be a hash lookup plus atomic pointer load in the common path.
+
+## Full Artifact and Sharding
+
+Offline full build produces a sharded artifact:
+
+```text
+IndexArtifact
+  -> Header
+  -> Metadata
   -> RuntimeSchema
-  -> CompiledRowLayout
+  -> ShardDirectory
+       -> ShardArtifact[0]
+       -> ShardArtifact[1]
+       -> ...
+       -> ShardArtifact[N-1]
+```
+
+Each shard artifact contains:
+
+```text
+ShardArtifact
+  -> shard_id
+  -> row_count
+  -> PrimaryKeyEntries or frozen hash index
+  -> RowArena
   -> StringPools
   -> ListPools
+  -> Checksums
 ```
 
-Each row is a compact variable-length record:
+Header and metadata include:
+
+```text
+magic
+format_version
+artifact_id
+schema_version
+shard_count
+build_time
+source_watermark
+section_directory
+checksum
+```
+
+`source_watermark` is the preferred starting point for Kafka replay. `build_time + safety_buffer` is only a fallback when the upstream source cannot provide a stronger watermark.
+
+The full snapshot should be mmap-friendly. Row arenas, string pools, list pools, and frozen primary-key indexes should be readable directly from the artifact where possible. This prevents full updates from requiring two complete heap-resident copies of the dataset.
+
+## Primary Key Index
+
+For full snapshots, the artifact should store either:
+
+- a sorted `primary_key -> row_offset` array, or
+- an mmap-friendly frozen hash table.
+
+The first implementation may support both modes:
+
+```text
+low-memory mode: binary search over sorted mmap array
+low-latency mode: frozen hash table view
+```
+
+`absl::flat_hash_map<uint64_t, RowOffset>` remains useful for compact or realtime delta snapshots, where heap overhead is bounded by recent updates rather than the whole dataset.
+
+## Row Layout and Value Encoding
+
+The primary storage is row-based because the dominant access pattern is fetching one record and reading most or all fields.
 
 ```text
 RowRecord
@@ -102,25 +181,9 @@ Scalar fields are stored inline in `fixed_area`. Strings and lists use field-lev
 
 Encoding policy is configured per field. Offline builder may also choose defaults from Parquet statistics, but explicit configuration wins.
 
-## Primary Key Index
-
-The artifact stores a stable sorted array of:
-
-```text
-primary_key -> row_offset
-```
-
-At runtime, the default lookup index is:
-
-```cpp
-absl::flat_hash_map<uint64_t, RowOffset>
-```
-
-This keeps the first implementation simple and fast. Loading is asynchronous, so rebuilding the hash map from artifact entries is acceptable. A low-memory mode can use binary search over the sorted array. A future version can add an mmap-friendly frozen hash table without changing the query API.
-
 ## Runtime Schema
 
-Schema is a runtime object and is included in every full artifact. Each snapshot binds to one schema version and compiled row layout.
+Schema is a runtime object and is included in every full artifact. Each shard state binds to one schema version and compiled row layout.
 
 Fields are identified by stable `FieldId`, not only by name:
 
@@ -134,146 +197,124 @@ Schema evolution rules:
 - Deleting a field marks the field deprecated or tombstoned.
 - Field IDs are never reused.
 - Field type changes are rejected.
-- A snapshot can only be interpreted with its own compiled layout.
+- A row can only be interpreted with the compiled layout for its schema version.
 
-Clients should resolve field names to `FieldId` or `FieldAccessor<T>` outside the hot path. Accessors include schema-version checks and can re-resolve or fail safely when used with a newer manifest.
+Clients should resolve field names to `FieldId` or `FieldAccessor<T>` outside the hot path. Accessors include schema-version checks and can re-resolve or fail safely when used with a newer shard state.
 
-## Binary Artifact
+## Online Full Update
 
-Offline build output is a binary artifact optimized for online loading:
-
-```text
-IndexArtifact
-  -> Header
-  -> Metadata
-  -> RuntimeSchema
-  -> CompiledRowLayout
-  -> PrimaryKeyEntries
-  -> RowArena
-  -> StringPools
-  -> ListPools
-  -> Checksums
-```
-
-Header and metadata include:
+Full update is executed shard by shard to avoid holding two complete full datasets in memory.
 
 ```text
-magic
-format_version
-artifact_id
-schema_version
-row_count
-build_time
-source_watermark
-section_directory
-checksum
+ActiveGeneration
+  -> active ShardState[0..N-1]
+
+RebuildGeneration
+  -> artifact_id
+  -> full_watermark W
+  -> NewShard[0..N-1]
+       -> new_full: unloaded / loaded
+       -> rebuild_delta_since_W
+       -> replay_progress
 ```
 
-`source_watermark` is the preferred starting point for Kafka replay. `build_time + safety_buffer` is only a fallback when the upstream source cannot provide a stronger watermark.
-
-## Offline Builder
-
-The offline builder is a separate Bazel target from the online runtime library. It can depend on Arrow/Parquet without pulling heavy dependencies into the query runtime.
+Two logical update streams are required:
 
 ```text
-Parquet + schema/config
-  -> validate schema compatibility
-  -> encode rows
-  -> build dictionaries and list pools
-  -> write binary artifact
-  -> write metadata and checksums
+Live Apply
+  -> consumes current Kafka stream
+  -> writes immediately to active serving shards
+  -> preserves consume-then-readable semantics
+
+Rebuild Catch-up
+  -> consumes from full_watermark W
+  -> distributes upserts into NewShard[shard_id].rebuild_delta_since_W
+  -> prepares shard cutover data before each shard switches
 ```
 
-The builder owns full artifact construction only. Data delivery to online machines is outside the SDK.
+The two streams may be implemented as two consumers, or as one catch-up consumer plus a live consumer that starts dual-writing after catch-up. The correctness requirement is that active serving shards keep receiving live upserts while rebuild shards accumulate all upserts after `W`.
 
-## Online Loading
-
-The online runtime exposes asynchronous loading:
-
-```cpp
-LoadId LoadAsync(const LoadRequest& request);
-LoadState GetLoadState(LoadId id) const;
-bool CancelLoad(LoadId id);
-std::shared_ptr<const SnapshotManifest> CurrentManifest() const;
-```
-
-Full load state machine:
+Per-shard cutover:
 
 ```text
-Pending
-LoadingArtifact
-BuildingRuntimeIndex
-ReplayingKafka
-CatchingUp
-SwitchingBase
-Succeeded / Failed / Cancelled
+1. Load new_full for shard_i from the sharded artifact.
+2. Ensure rebuild_delta_since_W for shard_i has caught up to a safe position.
+3. Build NewShardState_i = new_full_i + rebuild_delta_i + empty realtime table.
+4. Record a per-shard cutover position C.
+5. Ensure rebuild_delta_i contains all shard_i messages up to C.
+6. Briefly pause live apply for shard_i, or write live messages > C into a per-shard handoff buffer.
+7. Atomically replace active_shards[i] with NewShardState_i.
+8. Apply buffered messages > C into the new realtime table.
+9. Route subsequent live upserts for shard_i to the new active shard.
+10. Release the old shard when readers drain.
 ```
 
-The load job:
-
-1. Parses artifact metadata and schema.
-2. Validates schema compatibility.
-3. Loads row arenas and pools.
-4. Builds the runtime primary key hash index.
-5. Replays Kafka upserts from `source_watermark - safety_buffer`.
-6. Waits until lag is below the configured threshold.
-7. Builds a new manifest and atomically switches the current manifest.
-
-No business-facing `PublishSnapshot()` API is exposed. Publishing is an internal step of the load and delta-update state machines.
-
-## Incremental Updates
-
-Kafka messages are whole-record upserts:
+At the moment shard_i switches:
 
 ```text
-primary_key -> complete structured row
+before: old_full_i + old_realtime_delta_i
+after:  new_full_i + rebuild_delta_since_W_i + new realtime_delta_i
 ```
 
-There is no index-level delete operation. A delete is represented by normal fields in the upserted row.
-
-Incremental state machine:
+Shards that have not switched yet continue serving:
 
 ```text
-KafkaConsumer
-  -> MutableDeltaBuffer
-  -> freeze every N seconds or M records
-  -> merge into MinorDeltaSnapshot
-  -> atomic publish new SnapshotManifest
+old_full + old_realtime_delta
 ```
 
-When `MinorDeltaSnapshot` exceeds configured thresholds, a background compaction merges it into `MajorDeltaSnapshot`:
+Their rebuild deltas continue accumulating in the background until their own cutover.
+
+## Kafka Ordering Requirements
+
+Kafka should be keyed by `primary_key` so that updates for the same key are ordered within one partition. If this cannot be guaranteed, each message must carry a monotonic business version or source position.
+
+Delta writes should preserve a comparable source position, such as:
 
 ```text
-MajorDelta + MinorDelta
-  -> NewMajorDelta
-  -> EmptyMinorDelta
-  -> atomic publish new SnapshotManifest
+partition + offset
+business_version
+event_time + tie_breaker
 ```
 
-Read path layer count remains fixed:
+This prevents an older replayed update from overwriting a newer live update when live apply and rebuild catch-up overlap.
+
+## Delta Compaction
+
+Realtime delta grows with live updates. Each shard should compact independently:
 
 ```text
-minor -> major -> full
+RealtimeDeltaAtomicTable
+  -> scan latest RowRef per key
+  -> build CompactDeltaSnapshot
+  -> create a fresh empty RealtimeDeltaAtomicTable
+  -> atomically publish new ShardState
 ```
 
-If `MajorDeltaSnapshot` grows beyond a configured ratio of the full snapshot, the component should emit an alert or request a new full artifact. The SDK should not silently allow unbounded delta growth.
+The read path remains fixed:
 
-## C++ API Sketch
+```text
+realtime_delta -> compact_delta -> full_snapshot
+```
+
+If a shard's compact delta grows beyond configured thresholds, the component should alert or prioritize that shard during the next full rebuild.
+
+## Online API Sketch
 
 ```cpp
 class ForwardIndex {
  public:
-  std::shared_ptr<const SnapshotManifest> CurrentManifest() const;
   std::optional<ValueView> Find(uint64_t primary_key) const;
+  std::shared_ptr<const ShardState> CurrentShard(uint64_t primary_key) const;
 
   LoadId LoadAsync(const LoadRequest& request);
   LoadState GetLoadState(LoadId id) const;
   bool CancelLoad(LoadId id);
 };
 
-class SnapshotManifest {
+class ShardState {
  public:
-  uint64_t Version() const;
+  uint32_t ShardId() const;
+  uint64_t Generation() const;
   const RuntimeSchema& Schema() const;
   std::optional<ValueView> Find(uint64_t primary_key) const;
 };
@@ -293,27 +334,40 @@ class ValueView {
 };
 ```
 
-Recommended request usage:
-
-```cpp
-auto manifest = index.CurrentManifest();
-auto value = manifest->Find(primary_key);
-```
-
-This pins one manifest for the whole request and avoids acquiring the current manifest repeatedly.
+`ValueView` must keep the pinned shard state alive so references into row arenas and dictionary pools remain valid.
 
 ## Concurrency Model
 
-- Query threads read immutable manifests only.
-- Kafka consumer and loader mutate only background-owned state.
-- Publishing a new version is a single atomic manifest pointer swap.
-- Old manifests remain alive while any query holds a shared reference.
-- Only one full load job should be active at a time.
-- Delta freeze and compaction jobs must serialize their manifest updates through one coordinator.
+- Query threads read one immutable shard state plus its read-optimized realtime delta.
+- The realtime delta uses atomic row pointer publication for immediate visibility.
+- Full rebuild loads and switches one shard or one small shard batch at a time.
+- Old shard states remain alive while any query holds a shared reference.
+- Only one full rebuild generation should be active at a time.
+- Per-shard cutover, live apply routing, and rebuild catch-up must be coordinated by one update coordinator.
+
+## Memory Model
+
+Peak full-update memory is bounded by shard batch size rather than full dataset size:
+
+```text
+active full dataset
++ currently loaded new full shard batch
++ active realtime deltas
++ rebuild delta since watermark
++ compact deltas
+```
+
+To keep memory predictable:
+
+- Use mmap-backed full shard artifacts where possible.
+- Limit full cutover batch size.
+- Track rebuild delta size per shard.
+- Abort or throttle rebuild if rebuild delta exceeds configured limits.
+- Prefer frozen indexes for full shards to avoid rebuilding full-size heap hash maps.
 
 ## Error Handling
 
-Load or delta publication must fail closed. The current serving manifest remains active if any step fails.
+Load, replay, compaction, or shard cutover must fail closed. Current serving shards remain active if any step fails.
 
 Failure examples:
 
@@ -321,21 +375,25 @@ Failure examples:
 - Unsupported format version.
 - Schema type incompatibility.
 - Corrupt row arena or dictionary section.
-- Kafka replay cannot catch up within configured limits.
+- Rebuild catch-up cannot reach the safe cutover position.
 - Delta row fails schema validation.
+- Kafka ordering metadata is missing or inconsistent.
 
-Operational state should expose the last successful manifest version, active load job state, Kafka lag, delta sizes, schema version, and last error.
+Operational state should expose active artifact ID, per-shard generation, rebuild progress, Kafka lag, delta sizes, schema version, and last error.
 
 ## Testing Strategy
 
 Core tests:
 
-- Lookup returns full rows from full snapshot.
-- Minor delta overrides full snapshot for the same primary key.
-- Major delta overrides full snapshot.
-- Minor delta overrides major delta.
-- Whole-row upsert never merges partial fields from base.
-- Atomic manifest switch preserves old-manifest readers.
+- Lookup returns full rows from full shard snapshots.
+- Realtime delta update is visible immediately after local publication.
+- Delta hit returns a whole row and never merges partial fields from full.
+- Compact delta overrides full snapshot.
+- Realtime delta overrides compact delta.
+- Per-shard cutover switches one shard without affecting other shards.
+- A shard not yet cut over still serves old full plus live realtime updates.
+- Rebuild delta accumulated before cutover is visible after shard switch.
+- Older replayed updates cannot overwrite newer live updates.
 - Deleted business rows are returned as normal rows with delete marker fields.
 - Schema add field returns defaults for old snapshots and values for new snapshots.
 - Schema delete field tombstones field ID and never reuses it.
@@ -348,14 +406,17 @@ Performance tests:
 
 - Single-key lookup latency under concurrent readers.
 - Full-row decode latency for common schemas.
-- Memory use with dictionary and arena encoding.
-- Load time and hash-index build time.
-- Delta freeze and compaction CPU cost.
+- Realtime delta lookup latency and update publication cost.
+- Memory use with mmap full shards, dictionary pools, and realtime deltas.
+- Per-shard load and cutover time.
+- Delta compaction CPU cost.
 
 ## Open Decisions
 
 - Exact binary encoding for `RowRecord` alignment and endianness.
 - Initial set of scalar and list element types.
-- Default thresholds for mutable buffer freeze, minor compaction, and major-delta alerting.
+- Shard count and shard assignment function.
+- Whether full shard primary-key index starts with sorted array only or frozen hash table.
+- Default thresholds for realtime delta compaction, rebuild delta limit, and shard cutover batch size.
 - Whether field accessors auto-re-resolve across schema versions or fail fast.
-- Whether the first implementation supports mmap-backed row arenas or always copies sections into owned memory.
+- Whether mmap is mandatory for full artifacts in v1 or configurable.
