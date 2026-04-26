@@ -8,7 +8,7 @@ Build an embedded C++20 library that serves low-latency in-memory forward lookup
 uint64_t primary_key -> structured value
 ```
 
-The component is optimized for high-concurrency read-heavy workloads. Kafka upserts must become visible to subsequent reads immediately after the SDK consumes and publishes them locally. Reads must still observe a complete row: a lookup sees either the previous full row or the new full row, never a partially applied value.
+The component is optimized for high-concurrency read-heavy workloads. Kafka upserts must become visible to subsequent reads immediately after the SDK consumes and publishes them locally. Reads must still observe a complete row version and never a partially applied value.
 
 The value schema is fixed per schema version but can be hot-loaded at runtime. Schema evolution only supports adding and deleting fields. Existing field types cannot change, and field IDs are never reused.
 
@@ -18,7 +18,7 @@ The value schema is fixed per schema version but can be hot-loaded at runtime. S
 - The SDK does not expose a manual business-facing publish API.
 - The SDK does not provide index-level delete operations. Deletes are represented as normal upserted fields, such as `is_deleted`.
 - The first version does not provide global multi-key snapshot isolation across all shards. The core semantic is single-key lookup consistency.
-- The first version does not optimize for field-scan workloads. The common path is point lookup followed by reading most or all fields.
+- The first version does not optimize for field-scan workloads. The common path is point lookup followed by reading all fields.
 
 ## Core Architecture
 
@@ -36,7 +36,7 @@ ShardState published container
   -> schema/layout handles
 ```
 
-`ShardDirectory` is an array of independently published shard pointers. In C++20, each pointer can be represented as `std::atomic<std::shared_ptr<const ShardState>>`, or hidden behind a small holder class. Publishing a shard uses release-store; readers use acquire-load to pin the shard state before lookup.
+`ShardDirectory` is an array of independently published shard pointers. In C++20, each pointer is represented as `std::atomic<std::shared_ptr<const ShardState>>`. Publishing a shard uses release-store; readers use acquire-load to pin the shard state before lookup.
 
 The read path only touches one shard:
 
@@ -57,7 +57,7 @@ Each Kafka upsert is a complete row. A delta hit returns a full value, so the re
 The index provides single-key snapshot semantics:
 
 - A lookup observes one shard state.
-- Within that shard, it sees either the old complete row or the new complete row.
+- Within that shard, it sees one complete row version.
 - A lookup never observes a partially encoded row.
 - Different shards may switch to a new full artifact at different times during a full update.
 
@@ -87,14 +87,14 @@ Upsert publication:
 ```text
 1. Decode and validate the Kafka row.
 2. Encode the complete row into an append-only row arena.
-3. Find or create the primary-key slot in the shard's realtime table.
+3. Find the primary-key slot in the shard's realtime table, creating the slot under a shard-local striped mutex when absent.
 4. Release-store the new RowRef* into that slot.
 5. Commit Kafka offset only after local publication succeeds.
 ```
 
-Subsequent reads can see the new row immediately after step 4. Old row memory is not reclaimed inline. Replaced rows stay in the append-only arena until the realtime table is rotated or compacted and reader epochs prove no query can still reference the old row.
+Subsequent reads can see the new row immediately after step 4. Old row memory is not reclaimed inline. Replaced rows stay in the append-only arena until the realtime table generation is compacted and reader epochs prove no query can still reference the old row.
 
-The realtime table should avoid application-level read locks. Writes may use shard-local locks or CAS during slot creation, but reads should be a hash lookup plus atomic pointer load in the common path.
+The realtime table avoids application-level read locks. Writes use shard-local striped mutexes during slot creation. Reads use a hash lookup plus atomic pointer load in the common path.
 
 ## Full Artifact and Sharding
 
@@ -118,7 +118,7 @@ Each shard artifact contains:
 ShardArtifact
   -> shard_id
   -> row_count
-  -> PrimaryKeyEntries or frozen hash index
+  -> FrozenPrimaryKeyIndex
   -> RowArena
   -> StringPools
   -> ListPools
@@ -145,23 +145,17 @@ The full snapshot should be mmap-friendly. Row arenas, string pools, list pools,
 
 ## Primary Key Index
 
-For full snapshots, the artifact should store either:
-
-- a sorted `primary_key -> row_offset` array, or
-- an mmap-friendly frozen hash table.
-
-The first implementation may support both modes:
+For full snapshots, the artifact stores an mmap-friendly frozen hash table:
 
 ```text
-low-memory mode: binary search over sorted mmap array
-low-latency mode: frozen hash table view
+FrozenPrimaryKeyIndex: primary_key -> row_offset
 ```
 
-`absl::flat_hash_map<uint64_t, RowOffset>` remains useful for compact or realtime delta snapshots, where heap overhead is bounded by recent updates rather than the whole dataset.
+`absl::flat_hash_map<uint64_t, RowOffset>` remains useful for compact and realtime delta snapshots, where heap overhead is bounded by recent updates instead of the whole dataset.
 
 ## Row Layout and Value Encoding
 
-The primary storage is row-based because the dominant access pattern is fetching one record and reading most or all fields.
+The primary storage is row-based because the dominant access pattern is fetching one record and reading all fields.
 
 ```text
 FixedSizeRowSlot
@@ -176,17 +170,17 @@ All rows for the same compiled schema version use the same slot size. This makes
 row_address = row_base + row_id * row_slot_size
 ```
 
-Scalar fields are stored inline in `fixed_area`. Strings and lists are not stored as variable-length inline payloads. They are represented by fixed-width references in `ref_area` and resolved through external pools or arenas.
+Scalar fields are stored inline in `fixed_area`. Strings and lists are not stored as variable-length inline payloads. They are represented by fixed-width references in `ref_area` and resolved through external pools and arenas.
 
 String and list fields use field-level encoding policies:
 
 - `inline_ref`: store a fixed-width small-value reference in the row.
-- `dict`: store a dictionary ID in the row and the value in a string or list pool.
+- `dict`: store a dictionary ID in the row and the value in a typed pool.
 - `arena`: store an offset and length into a variable-length arena.
 - `list_dict`: deduplicate the whole list value.
 - `element_dict`: deduplicate repeated list elements, especially repeated strings.
 
-Encoding policy is configured per field. Offline builder may also choose defaults from Parquet statistics, but explicit configuration wins. Adding or deleting fields creates a new compiled layout and may change `row_slot_size`; old shard states continue using their original layout.
+Encoding policy is configured per field. Offline builder may also choose defaults from Parquet statistics, but explicit configuration wins. Schema additions and deletions create a new compiled layout and may change `row_slot_size`; old shard states continue using their original layout.
 
 ## Runtime Schema
 
@@ -201,12 +195,12 @@ FieldId -> name, type, repeated/list flag, nullable/default, encoding, status
 Schema evolution rules:
 
 - Adding a field creates a new field ID.
-- Deleting a field marks the field deprecated or tombstoned.
+- Deleting a field marks the field tombstoned.
 - Field IDs are never reused.
 - Field type changes are rejected.
 - A row can only be interpreted with the compiled layout for its schema version.
 
-Clients should resolve field names to `FieldId` or `FieldAccessor<T>` outside the hot path. Accessors include schema-version checks and can re-resolve or fail safely when used with a newer shard state.
+Clients should resolve field names to `FieldId` and `FieldAccessor<T>` outside the hot path. Accessors include schema-version checks and fail fast when used with an incompatible shard state.
 
 ## Online Full Update
 
@@ -239,7 +233,7 @@ Rebuild Catch-up
   -> prepares shard cutover data before each shard switches
 ```
 
-The two streams may be implemented as two consumers, or as one catch-up consumer plus a live consumer that starts dual-writing after catch-up. The correctness requirement is that active serving shards keep receiving live upserts while rebuild shards accumulate all upserts after `W`.
+The two streams are implemented as two independent Kafka consumers. The correctness requirement is that active serving shards keep receiving live upserts while rebuild shards accumulate all upserts after `W`.
 
 Per-shard cutover:
 
@@ -249,7 +243,7 @@ Per-shard cutover:
 3. Build NewShardState_i = new_full_i + rebuild_delta_i + empty realtime table.
 4. Record a per-shard cutover position C.
 5. Ensure rebuild_delta_i contains all shard_i messages up to C.
-6. Briefly pause live apply for shard_i, or write live messages > C into a per-shard handoff buffer.
+6. Write live messages > C into a per-shard handoff buffer during the cutover window.
 7. Atomically replace active_shards[i] with NewShardState_i.
 8. Apply buffered messages > C into the new realtime table.
 9. Route subsequent live upserts for shard_i to the new active shard.
@@ -273,7 +267,7 @@ Their rebuild deltas continue accumulating in the background until their own cut
 
 ## Kafka Ordering Requirements
 
-Kafka should be keyed by `primary_key` so that updates for the same key are ordered within one partition. If this cannot be guaranteed, each message must carry a monotonic business version or source position.
+Kafka must be keyed by `primary_key` so that updates for the same key are ordered within one partition. Each message also carries a comparable source position.
 
 Delta writes should preserve a comparable source position, such as:
 
@@ -305,7 +299,7 @@ The read path remains fixed:
 realtime_delta -> compact_delta -> full_snapshot
 ```
 
-If a shard's compact delta grows beyond configured thresholds, the component should alert or prioritize that shard during the next full rebuild.
+If a shard's compact delta grows beyond configured thresholds, the component alerts and prioritizes that shard during the next full rebuild.
 
 ## Online API Sketch
 
@@ -349,7 +343,7 @@ class ValueView {
 
 - Query threads read one immutable shard state plus its read-optimized realtime delta.
 - The realtime delta uses atomic row pointer publication for immediate visibility.
-- Full rebuild loads and switches one shard or one small shard batch at a time.
+- Full rebuild loads and switches one shard at a time.
 - Old shard states remain alive while any query holds a shared reference.
 - Only one full rebuild generation should be active at a time.
 - Per-shard cutover, live apply routing, and rebuild catch-up must be coordinated by one update coordinator.
@@ -371,22 +365,23 @@ To keep memory predictable:
 - Use mmap-backed full shard artifacts where possible.
 - Limit full cutover batch size.
 - Track rebuild delta size per shard.
-- Abort or throttle rebuild if rebuild delta exceeds configured limits.
+- Abort rebuild if rebuild delta exceeds configured limits.
 - Prefer frozen indexes for full shards to avoid rebuilding full-size heap hash maps.
 
 ## Error Handling
 
-Load, replay, compaction, or shard cutover must fail closed. Current serving shards remain active if any step fails.
+Load, replay, compaction, and shard cutover must fail closed. Current serving shards remain active if any step fails.
 
 Failure examples:
 
 - Artifact checksum mismatch.
 - Unsupported format version.
 - Schema type incompatibility.
-- Corrupt row arena or dictionary section.
+- Corrupt row arena section.
+- Corrupt dictionary section.
 - Rebuild catch-up cannot reach the safe cutover position.
 - Delta row fails schema validation.
-- Kafka ordering metadata is missing or inconsistent.
+- Kafka ordering metadata is invalid.
 
 Operational state should expose active artifact ID, per-shard generation, rebuild progress, Kafka lag, delta sizes, schema version, and last error.
 
@@ -425,7 +420,7 @@ Performance tests:
 - Exact binary encoding for `FixedSizeRowSlot` alignment and endianness.
 - Initial set of scalar and list element types.
 - Shard count and shard assignment function.
-- Whether full shard primary-key index starts with sorted array only or frozen hash table.
+- Full shard primary-key index uses an mmap-friendly frozen hash table.
 - Default thresholds for realtime delta compaction, rebuild delta limit, and shard cutover batch size.
-- Whether field accessors auto-re-resolve across schema versions or fail fast.
-- Whether mmap is mandatory for full artifacts in v1 or configurable.
+- Field accessors fail fast across incompatible schema versions.
+- Full artifacts require mmap support in v1.
