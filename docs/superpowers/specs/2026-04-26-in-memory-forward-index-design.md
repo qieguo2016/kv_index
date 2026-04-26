@@ -41,13 +41,13 @@ ShardState published container
 The read path only touches one shard:
 
 ```text
-Find(primary_key)
+Get(primary_key)
   -> shard_id = ShardFor(primary_key)
   -> acquire current ShardState for shard_id
-  -> realtime_delta.Find(primary_key)
-  -> compact_delta.Find(primary_key)
-  -> full_snapshot.Find(primary_key)
-  -> return ValueView
+  -> realtime_delta.Get(primary_key)
+  -> compact_delta.Get(primary_key)
+  -> full_snapshot.Get(primary_key)
+  -> return Row
 ```
 
 Each Kafka upsert is a complete row. A delta hit returns a full value, so the read path never merges fields from base and delta.
@@ -304,8 +304,8 @@ If a shard's compact delta grows beyond configured thresholds, the component ale
 ```cpp
 class ForwardIndex {
  public:
-  std::optional<ValueView> Find(uint64_t primary_key) const;
-  std::shared_ptr<const ShardState> CurrentShard(uint64_t primary_key) const;
+  std::optional<Row> Get(uint64_t primary_key) const;
+  std::vector<std::optional<Row>> MGet(absl::Span<const uint64_t> primary_keys) const;
 
   LoadId LoadAsync(const LoadRequest& request);
   LoadState GetLoadState(LoadId id) const;
@@ -317,10 +317,10 @@ class ShardState {
   uint32_t ShardId() const;
   uint64_t Generation() const;
   const RuntimeSchema& Schema() const;
-  std::optional<ValueView> Find(uint64_t primary_key) const;
+  std::optional<Row> Get(uint64_t primary_key) const;
 };
 
-class ValueView {
+class Row {
  public:
   bool Has(FieldId field_id) const;
 
@@ -335,7 +335,7 @@ class ValueView {
 };
 ```
 
-`ValueView` must keep the pinned shard state alive so references into row arenas and dictionary pools remain valid.
+`ShardState` is an internal type; public query APIs do not expose `CurrentShard`. `Row` keeps the pinned shard state alive so references into row arenas and dictionary pools remain valid. `MGet` returns results in the same order as the input keys and groups keys by shard internally to avoid repeatedly acquiring the same shard pointer.
 
 ## Concurrency Model
 
@@ -387,7 +387,8 @@ Operational state should expose active artifact ID, per-shard generation, rebuil
 
 Core tests:
 
-- Lookup returns full rows from full shard snapshots.
+- `Get` returns full rows from full shard snapshots.
+- `MGet` returns results in input-key order across multiple shards.
 - Realtime delta update is visible immediately after local publication.
 - Delta hit returns a whole row and never merges partial fields from full.
 - Compact delta overrides full snapshot.
@@ -406,9 +407,10 @@ Core tests:
 
 Performance tests:
 
-- Single-key lookup latency under concurrent readers.
+- Single-key `Get` latency under concurrent readers.
+- Batched `MGet` latency for mixed-shard and same-shard key sets.
 - Full-row decode latency for common schemas.
-- Realtime delta lookup latency and update publication cost.
+- Realtime delta `Get` latency and update publication cost.
 - Memory use with mmap full shards, dictionary pools, and realtime deltas.
 - Per-shard load and cutover time.
 - Delta compaction CPU cost.

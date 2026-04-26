@@ -41,13 +41,13 @@ ShardState published container
 读路径只访问一个 shard：
 
 ```text
-Find(primary_key)
+Get(primary_key)
   -> shard_id = ShardFor(primary_key)
   -> acquire current ShardState for shard_id
-  -> realtime_delta.Find(primary_key)
-  -> compact_delta.Find(primary_key)
-  -> full_snapshot.Find(primary_key)
-  -> return ValueView
+  -> realtime_delta.Get(primary_key)
+  -> compact_delta.Get(primary_key)
+  -> full_snapshot.Get(primary_key)
+  -> return Row
 ```
 
 每条 Kafka upsert 都是完整 row。命中 delta 后即可返回完整 value，所以读路径永远不需要把 base 和 delta 的字段做合并。
@@ -304,8 +304,8 @@ realtime_delta -> compact_delta -> full_snapshot
 ```cpp
 class ForwardIndex {
  public:
-  std::optional<ValueView> Find(uint64_t primary_key) const;
-  std::shared_ptr<const ShardState> CurrentShard(uint64_t primary_key) const;
+  std::optional<Row> Get(uint64_t primary_key) const;
+  std::vector<std::optional<Row>> MGet(absl::Span<const uint64_t> primary_keys) const;
 
   LoadId LoadAsync(const LoadRequest& request);
   LoadState GetLoadState(LoadId id) const;
@@ -317,10 +317,10 @@ class ShardState {
   uint32_t ShardId() const;
   uint64_t Generation() const;
   const RuntimeSchema& Schema() const;
-  std::optional<ValueView> Find(uint64_t primary_key) const;
+  std::optional<Row> Get(uint64_t primary_key) const;
 };
 
-class ValueView {
+class Row {
  public:
   bool Has(FieldId field_id) const;
 
@@ -335,7 +335,7 @@ class ValueView {
 };
 ```
 
-`ValueView` 必须持有 pinned shard state，保证 row arena 和 dictionary pool 中的引用在 view 生命周期内始终有效。
+`ShardState` 是内部类型；public query API 不暴露 `CurrentShard`。`Row` 必须持有 pinned shard state，保证 row arena 和 dictionary pool 中的引用在 row 生命周期内始终有效。`MGet` 的返回结果与输入 keys 保持相同顺序，内部按 shard 对 key 分组，避免重复 acquire 同一个 shard pointer。
 
 ## 并发模型
 
@@ -387,7 +387,8 @@ load、replay、compaction 和 shard cutover 必须 fail closed。任一步骤�
 
 核心测试：
 
-- 从 full shard snapshot 查询能返回完整 row。
+- `Get` 从 full shard snapshot 能返回完整 row。
+- `MGet` 对跨 shard keys 返回与输入 key 顺序一致的结果。
 - realtime delta 本地发布后立刻可见。
 - delta hit 返回整条 row，永远不和 full 做部分字段合并。
 - compact delta 覆盖 full snapshot。
@@ -406,9 +407,10 @@ load、replay、compaction 和 shard cutover 必须 fail closed。任一步骤�
 
 性能测试：
 
-- 并发 reader 下的单 key 查询延迟。
+- 并发 reader 下单 key `Get` 延迟。
+- 混合 shard 和同 shard key set 下的批量 `MGet` 延迟。
 - 常见 schema 的 full-row decode 延迟。
-- realtime delta lookup 延迟和 update publication 成本。
+- realtime delta `Get` 延迟和 update publication 成本。
 - mmap full shards、dictionary pools、realtime deltas 下的内存使用。
 - per-shard load 和 cutover 时间。
 - delta compaction CPU 成本。
