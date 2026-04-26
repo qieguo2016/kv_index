@@ -8,7 +8,7 @@ Build an embedded C++20 library that serves low-latency in-memory forward lookup
 uint64_t primary_key -> structured value
 ```
 
-The component is optimized for high-concurrency read-heavy workloads. Kafka upserts must become visible to subsequent reads immediately after the SDK consumes and publishes them locally. Reads must still observe a complete row version and never a partially applied value.
+The component is optimized for high-concurrency read-heavy workloads. Kafka upserts must become visible to subsequent reads immediately after the active generation consumer for the target shard publishes them locally. Reads must still observe a complete row version and never a partially applied value.
 
 The value schema is fixed per schema version but can be hot-loaded at runtime. Schema evolution only supports adding and deleting fields. Existing field types cannot change, and field IDs are never reused.
 
@@ -77,8 +77,8 @@ The serving path uses a read-optimized mutable delta table:
 
 ```text
 RealtimeDeltaAtomicTable
-  -> sharded hash table
-  -> slot: primary_key -> atomic RowRef*
+  -> fixed-capacity open-addressing hash table
+  -> slot: atomic key state + primary_key + atomic RowRef*
   -> append-only row arena
 ```
 
@@ -87,14 +87,14 @@ Upsert publication:
 ```text
 1. Decode and validate the Kafka row.
 2. Encode the complete row into an append-only row arena.
-3. Find the primary-key slot in the shard's realtime table, creating the slot under a shard-local striped mutex when absent.
+3. Find the primary-key slot in the shard's realtime table, creating the slot with CAS when absent.
 4. Release-store the new RowRef* into that slot.
 5. Commit Kafka offset only after local publication succeeds.
 ```
 
 Subsequent reads can see the new row immediately after step 4. Old row memory is not reclaimed inline. Replaced rows stay in the append-only arena until the realtime table generation is compacted and reader epochs prove no query can still reference the old row.
 
-The realtime table avoids application-level read locks. Writes use shard-local striped mutexes during slot creation. Reads use a hash lookup plus atomic pointer load in the common path.
+The realtime table avoids application-level read locks. Slot creation uses CAS on the slot key state. Reads use open-addressing probe plus atomic pointer load in the common path.
 
 ## Full Artifact and Sharding
 
@@ -215,7 +215,7 @@ RebuildGeneration
   -> full_watermark W
   -> NewShard[0..N-1]
        -> new_full: unloaded / loaded
-       -> rebuild_delta_since_W
+       -> RealtimeDeltaAtomicTable
        -> replay_progress
 ```
 
@@ -224,37 +224,34 @@ Two logical update streams are required:
 ```text
 Live Apply
   -> consumes current Kafka stream
-  -> writes immediately to active serving shards
-  -> preserves consume-then-readable semantics
+  -> writes immediately to shards still owned by ActiveGeneration
+  -> remains the authoritative visible stream for shards that still point to ActiveGeneration
 
 Rebuild Catch-up
   -> consumes from full_watermark W
-  -> distributes upserts into NewShard[shard_id].rebuild_delta_since_W
-  -> prepares shard cutover data before each shard switches
+  -> writes the same row format into RebuildGeneration shards
+  -> becomes the authoritative visible stream for a shard after that shard switches to RebuildGeneration
 ```
 
-The two streams are implemented as two independent Kafka consumers. The correctness requirement is that active serving shards keep receiving live upserts while rebuild shards accumulate all upserts after `W`.
+The two streams are implemented as two independent Kafka consumers. During rebuild, both consumers keep running globally. Live Apply publishes only shards still owned by ActiveGeneration. Rebuild Catch-up writes RebuildGeneration for every shard from watermark `W` until all shards have switched. After a shard switches, Rebuild Catch-up is the active generation consumer for that shard.
 
 Per-shard cutover:
 
 ```text
 1. Load new_full for shard_i from the sharded artifact.
-2. Ensure rebuild_delta_since_W for shard_i has caught up to a safe position.
-3. Build NewShardState_i = new_full_i + rebuild_delta_i + empty realtime table.
-4. Record a per-shard cutover position C.
-5. Ensure rebuild_delta_i contains all shard_i messages up to C.
-6. Write live messages > C into a per-shard handoff buffer during the cutover window.
-7. Atomically replace active_shards[i] with NewShardState_i.
-8. Apply buffered messages > C into the new realtime table.
-9. Route subsequent live upserts for shard_i to the new active shard.
-10. Release the old shard when readers drain.
+2. Ensure RebuildGeneration shard_i has replayed through the latest source position published by Live Apply for shard_i.
+3. Atomically mark shard_i as owned by RebuildGeneration.
+4. Attach new_full_i to RebuildGeneration shard_i.
+5. Atomically replace active_shards[i] with RebuildGeneration shard_i.
+6. Keep both Kafka consumers running globally.
+7. Release the old shard when readers drain.
 ```
 
 At the moment shard_i switches:
 
 ```text
 before: old_full_i + old_realtime_delta_i
-after:  new_full_i + rebuild_delta_since_W_i + new realtime_delta_i
+after:  new_full_i + rebuild_realtime_delta_i
 ```
 
 Shards that have not switched yet continue serving:
@@ -263,7 +260,9 @@ Shards that have not switched yet continue serving:
 old_full + old_realtime_delta
 ```
 
-Their rebuild deltas continue accumulating in the background until their own cutover.
+Their RebuildGeneration realtime deltas continue accumulating in the background until their own cutover.
+
+After a shard switches, queries for that shard read RebuildGeneration. Live Apply continues consuming globally until the rebuild completes, but it skips publication for switched shards. Rebuild Catch-up is the serving-visible stream for switched shards and must stay caught up according to the configured lag threshold.
 
 ## Kafka Ordering Requirements
 
@@ -277,7 +276,7 @@ business_version
 event_time + tie_breaker
 ```
 
-This prevents an older replayed update from overwriting a newer live update when live apply and rebuild catch-up overlap.
+This prevents an older replayed update from overwriting a newer update inside the same generation.
 
 ## Delta Compaction
 
@@ -342,11 +341,11 @@ class ValueView {
 ## Concurrency Model
 
 - Query threads read one immutable shard state plus its read-optimized realtime delta.
-- The realtime delta uses atomic row pointer publication for immediate visibility.
+- The realtime delta uses CAS slot creation and atomic row pointer publication for immediate visibility.
 - Full rebuild loads and switches one shard at a time.
 - Old shard states remain alive while any query holds a shared reference.
 - Only one full rebuild generation should be active at a time.
-- Per-shard cutover, live apply routing, and rebuild catch-up must be coordinated by one update coordinator.
+- Per-shard cutover and rebuild catch-up must be coordinated by one update coordinator.
 
 ## Memory Model
 
@@ -356,7 +355,7 @@ Peak full-update memory is bounded by shard batch size rather than full dataset 
 active full dataset
 + currently loaded new full shard batch
 + active realtime deltas
-+ rebuild delta since watermark
++ rebuild generation realtime deltas since watermark
 + compact deltas
 ```
 
@@ -364,7 +363,7 @@ To keep memory predictable:
 
 - Use mmap-backed full shard artifacts where possible.
 - Limit full cutover batch size.
-- Track rebuild delta size per shard.
+- Track rebuild generation realtime delta size per shard.
 - Abort rebuild if rebuild delta exceeds configured limits.
 - Prefer frozen indexes for full shards to avoid rebuilding full-size heap hash maps.
 
@@ -379,7 +378,7 @@ Failure examples:
 - Schema type incompatibility.
 - Corrupt row arena section.
 - Corrupt dictionary section.
-- Rebuild catch-up cannot reach the safe cutover position.
+- Rebuild Catch-up cannot reach the safe cutover position.
 - Delta row fails schema validation.
 - Kafka ordering metadata is invalid.
 
@@ -396,8 +395,8 @@ Core tests:
 - Realtime delta overrides compact delta.
 - Per-shard cutover switches one shard without affecting other shards.
 - A shard not yet cut over still serves old full plus live realtime updates.
-- Rebuild delta accumulated before cutover is visible after shard switch.
-- Older replayed updates cannot overwrite newer live updates.
+- RebuildGeneration realtime delta accumulated before cutover is visible after shard switch.
+- Older source positions cannot overwrite newer source positions inside one generation.
 - Deleted business rows are returned as normal rows with delete marker fields.
 - Schema add field returns defaults for old snapshots and values for new snapshots.
 - Schema delete field tombstones field ID and never reuses it.

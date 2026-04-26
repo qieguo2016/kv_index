@@ -8,7 +8,7 @@
 uint64_t primary_key -> structured value
 ```
 
-组件面向高并发、读多写少的在线查询场景优化。Kafka upsert 被 SDK 消费并在本地发布成功后，后续查询必须立刻可见。读路径必须读取一个完整 row version，不能看到部分写入的 value。
+组件面向高并发、读多写少的在线查询场景优化。Kafka upsert 被目标 shard 的 active generation consumer 本地发布成功后，后续查询必须立刻可见。读路径必须读取一个完整 row version，不能看到部分写入的 value。
 
 value schema 按 schema version 固定，但 schema 本身支持运行期热加载。schema 演进只支持新增字段和删除字段；已有字段类型不能变更，field ID 永不复用。
 
@@ -77,8 +77,8 @@ serving 路径使用读优化的 mutable delta table：
 
 ```text
 RealtimeDeltaAtomicTable
-  -> sharded hash table
-  -> slot: primary_key -> atomic RowRef*
+  -> fixed-capacity open-addressing hash table
+  -> slot: atomic key state + primary_key + atomic RowRef*
   -> append-only row arena
 ```
 
@@ -87,14 +87,14 @@ upsert 发布流程：
 ```text
 1. 解码并校验 Kafka row。
 2. 把完整 row 编码进 append-only row arena。
-3. 在该 shard 的 realtime table 中查找 primary-key slot；slot 不存在时，通过 shard-local striped mutex 创建。
+3. 在该 shard 的 realtime table 中查找 primary-key slot；slot 不存在时，通过 CAS 创建。
 4. release-store 新 RowRef* 到该 slot。
 5. 本地发布成功后再 commit Kafka offset。
 ```
 
 第 4 步完成后，后续读请求即可看到新 row。旧 row memory 不在写入路径上立即回收；被替换的 row 会保留在 append-only arena 中，直到 realtime table generation 完成 compaction，并且 reader epoch 证明没有查询还可能引用旧 row 后再释放。
 
-realtime table 避免读路径应用层锁。写入在创建 slot 时使用 shard-local striped mutex；读路径 common path 是 hash lookup 加 atomic pointer load。
+realtime table 避免读路径应用层锁。slot 创建使用 CAS 更新 slot key state；读路径 common path 是 open-addressing probe 加 atomic pointer load。
 
 ## 全量 Artifact 与分片
 
@@ -215,7 +215,7 @@ RebuildGeneration
   -> full_watermark W
   -> NewShard[0..N-1]
        -> new_full: unloaded / loaded
-       -> rebuild_delta_since_W
+       -> RealtimeDeltaAtomicTable
        -> replay_progress
 ```
 
@@ -224,37 +224,34 @@ RebuildGeneration
 ```text
 Live Apply
   -> 消费当前 Kafka stream
-  -> 立即写入 active serving shards
-  -> 保证消费后可读
+  -> 立即写入仍归 ActiveGeneration 所有的 shards
+  -> 对仍指向 ActiveGeneration 的 shard 作为 authoritative visible stream
 
 Rebuild Catch-up
   -> 从 full_watermark W 开始消费
-  -> 按 shard_id 分发 upsert 到 NewShard[shard_id].rebuild_delta_since_W
-  -> 在每个 shard 切换前准备好 cutover 数据
+  -> 把同样 row format 写入 RebuildGeneration shards
+  -> shard 切换到 RebuildGeneration 后，作为该 shard 的 authoritative visible stream
 ```
 
-这两条流实现成两个独立 Kafka consumer。正确性要求是：active serving shards 持续接收 live upsert，同时 rebuild shards 积累 `W` 之后的所有 upsert。
+这两条流实现成两个独立 Kafka consumer。rebuild 期间，两个 consumer 都保持全局运行。Live Apply 只发布仍归 ActiveGeneration 所有的 shard。Rebuild Catch-up 从 watermark `W` 开始持续写 RebuildGeneration 的所有 shard，直到所有 shard 完成切换。某个 shard 切换后，Rebuild Catch-up 成为该 shard 的 active generation consumer。
 
 单 shard 切换流程：
 
 ```text
 1. 从 sharded artifact 加载 shard_i 的 new_full。
-2. 确认 shard_i 的 rebuild_delta_since_W 已追到安全位置。
-3. 构建 NewShardState_i = new_full_i + rebuild_delta_i + empty realtime table。
-4. 记录 shard_i 的 cutover position C。
-5. 确认 rebuild_delta_i 已包含 shard_i 上所有 <= C 的消息。
-6. 在 cutover window 内，把 > C 的 live 消息写入 per-shard handoff buffer。
-7. 原子替换 active_shards[i] 为 NewShardState_i。
-8. 把 handoff buffer 中 > C 的消息写入新的 realtime table。
-9. 后续 shard_i 的 live upsert 路由到新的 active shard。
-10. 等 reader drain 后释放旧 shard。
+2. 确认 RebuildGeneration shard_i 已追过 Live Apply 为 shard_i 发布过的最新 source position。
+3. 原子标记 shard_i 归 RebuildGeneration 所有。
+4. 把 new_full_i 绑定到 RebuildGeneration shard_i。
+5. 原子替换 active_shards[i] 为 RebuildGeneration shard_i。
+6. 两个 Kafka consumer 继续保持全局运行。
+7. 等 reader drain 后释放旧 shard。
 ```
 
 shard_i 切换瞬间：
 
 ```text
 before: old_full_i + old_realtime_delta_i
-after:  new_full_i + rebuild_delta_since_W_i + new realtime_delta_i
+after:  new_full_i + rebuild_realtime_delta_i
 ```
 
 尚未切换的 shard 继续服务：
@@ -263,7 +260,9 @@ after:  new_full_i + rebuild_delta_since_W_i + new realtime_delta_i
 old_full + old_realtime_delta
 ```
 
-它们的 rebuild delta 会在后台继续积累，直到各自完成 cutover。
+它们的 RebuildGeneration realtime delta 会在后台继续积累，直到各自完成 cutover。
+
+shard 切换后，该 shard 的查询读取 RebuildGeneration。Live Apply 继续全局消费，直到整个 rebuild 完成，但它跳过已切换 shard 的发布。Rebuild Catch-up 是已切换 shard 的 serving-visible stream，并且必须按照配置的 lag threshold 保持追平。
 
 ## Kafka 顺序要求
 
@@ -277,7 +276,7 @@ business_version
 event_time + tie_breaker
 ```
 
-这可以防止 live apply 和 rebuild catch-up 重叠时，较旧的 replay 更新覆盖较新的 live 更新。
+这可以防止同一个 generation 内较旧的 source position 覆盖较新的 source position。
 
 ## Delta Compaction
 
@@ -342,11 +341,11 @@ class ValueView {
 ## 并发模型
 
 - 查询线程读取一个不可变 shard state 及其读优化 realtime delta。
-- realtime delta 使用 atomic row pointer publication 保证即时可见。
+- realtime delta 使用 CAS slot creation 和 atomic row pointer publication 保证即时可见。
 - full rebuild 每次只加载和切换一个 shard。
 - 只要还有查询持有 shared reference，旧 shard state 就会继续存活。
 - 同一时刻应该只允许一个 active full rebuild generation。
-- per-shard cutover、live apply routing 和 rebuild catch-up 必须由一个 update coordinator 协调。
+- per-shard cutover 和 rebuild catch-up 必须由一个 update coordinator 协调。
 
 ## 内存模型
 
@@ -356,7 +355,7 @@ class ValueView {
 active full dataset
 + currently loaded new full shard batch
 + active realtime deltas
-+ rebuild delta since watermark
++ rebuild generation realtime deltas since watermark
 + compact deltas
 ```
 
@@ -364,7 +363,7 @@ active full dataset
 
 - full shard artifact 尽量使用 mmap-backed。
 - 限制 full cutover batch size。
-- 按 shard 追踪 rebuild delta size。
+- 按 shard 追踪 rebuild generation realtime delta size。
 - 如果 rebuild delta 超过配置限制，abort rebuild。
 - full shard 优先使用 frozen index，避免重建全量级 heap hash map。
 
@@ -379,7 +378,7 @@ load、replay、compaction 和 shard cutover 必须 fail closed。任一步骤�
 - schema 类型不兼容。
 - row arena section 损坏。
 - dictionary section 损坏。
-- rebuild catch-up 无法追到安全 cutover position。
+- Rebuild Catch-up 无法追到安全 cutover position。
 - delta row schema 校验失败。
 - Kafka ordering metadata 无效。
 
@@ -396,8 +395,8 @@ load、replay、compaction 和 shard cutover 必须 fail closed。任一步骤�
 - realtime delta 覆盖 compact delta。
 - 单 shard cutover 不影响其他 shard。
 - 尚未 cutover 的 shard 仍服务 old full 加 live realtime updates。
-- cutover 前积累的 rebuild delta 在 shard 切换后可见。
-- 较旧的 replay update 不能覆盖较新的 live update。
+- cutover 前积累的 RebuildGeneration realtime delta 在 shard 切换后可见。
+- 同一个 generation 内，较旧的 source position 不能覆盖较新的 source position。
 - 业务删除 row 会作为带 delete marker 字段的普通 row 返回。
 - schema 新增字段时，旧 snapshot 返回默认值，新 snapshot 返回实际值。
 - schema 删除字段时，field ID tombstone 且永不复用。
