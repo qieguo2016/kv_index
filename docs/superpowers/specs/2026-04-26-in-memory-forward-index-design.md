@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build an embedded C++17 library that serves low-latency in-memory forward lookups:
+Build an embedded C++20 library that serves low-latency in-memory forward lookups:
 
 ```text
 uint64_t primary_key -> structured value
@@ -27,7 +27,7 @@ The index is sharded by primary key. Each shard can be loaded, compacted, and sw
 ```text
 ForwardIndex
   -> ShardDirectory
-       -> C++17 atomic_load/store protected shared_ptr<const ShardState>[N]
+       -> std::atomic<std::shared_ptr<const ShardState>>[N]
 
 ShardState published container
   -> FullSnapshotView
@@ -36,7 +36,7 @@ ShardState published container
   -> schema/layout handles
 ```
 
-`ShardDirectory` is an array of independently published shard pointers. In C++17, each pointer should be accessed through `std::atomic_load` and `std::atomic_store` free functions on `std::shared_ptr`, or hidden behind a small holder class. The design should not rely on `std::atomic<std::shared_ptr<T>>`, which is a C++20 facility.
+`ShardDirectory` is an array of independently published shard pointers. In C++20, each pointer can be represented as `std::atomic<std::shared_ptr<const ShardState>>`, or hidden behind a small holder class. Publishing a shard uses release-store; readers use acquire-load to pin the shard state before lookup.
 
 The read path only touches one shard:
 

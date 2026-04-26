@@ -2,7 +2,7 @@
 
 ## 目标
 
-构建一个嵌入式 C++17 库，提供低延迟的纯内存正排查询：
+构建一个嵌入式 C++20 库，提供低延迟的纯内存正排查询：
 
 ```text
 uint64_t primary_key -> structured value
@@ -27,7 +27,7 @@ value schema 按 schema version 固定，但 schema 本身支持运行期热加�
 ```text
 ForwardIndex
   -> ShardDirectory
-       -> C++17 atomic_load/store 保护的 shared_ptr<const ShardState>[N]
+       -> std::atomic<std::shared_ptr<const ShardState>>[N]
 
 ShardState published container
   -> FullSnapshotView
@@ -36,7 +36,7 @@ ShardState published container
   -> schema/layout handles
 ```
 
-`ShardDirectory` 是一组可独立发布的 shard 指针。在 C++17 中，每个指针应通过 `std::atomic_load` 和 `std::atomic_store` 这类 free function 访问 `std::shared_ptr`，或者封装在一个小的 holder 类中。设计不依赖 `std::atomic<std::shared_ptr<T>>`，因为那是 C++20 设施。
+`ShardDirectory` 是一组可独立发布的 shard 指针。在 C++20 中，每个指针可以表示为 `std::atomic<std::shared_ptr<const ShardState>>`，或者封装在一个小的 holder 类中。发布 shard 使用 release-store；读线程使用 acquire-load 在 lookup 前 pin 住 shard state。
 
 读路径只访问一个 shard：
 
