@@ -20,6 +20,55 @@ The value schema is fixed per schema version but can be hot-loaded at runtime. S
 - The first version does not provide global multi-key snapshot isolation across all shards. The core semantic is single-key lookup consistency.
 - The first version does not optimize for field-scan workloads. The common path is point lookup followed by reading all fields.
 
+## Online API Sketch
+
+```cpp
+class ForwardIndex {
+ public:
+  std::optional<Row> Get(uint64_t primary_key) const;
+  std::vector<std::optional<Row>> MGet(absl::Span<const uint64_t> primary_keys) const;
+
+  LoadId LoadAsync(const LoadRequest& request);
+  LoadState GetLoadState(LoadId id) const;
+  bool CancelLoad(LoadId id);
+};
+
+class ShardState {
+ public:
+  uint32_t ShardId() const;
+  uint64_t Generation() const;
+  const RuntimeSchema& Schema() const;
+  std::optional<Row> Get(uint64_t primary_key) const;
+};
+
+class Row {
+ public:
+  bool Has(FieldId field_id) const;
+
+  template <typename T>
+  std::optional<T> Get(FieldId field_id) const;
+
+  template <typename T>
+  std::optional<T> Get(FieldAccessor<T> accessor) const;
+
+  template <typename T>
+  ListView<T> GetList(FieldId field_id) const;
+};
+```
+
+`ShardState` is an internal type; public query APIs do not expose `CurrentShard`. `Row` keeps the pinned shard state alive so references into row arenas and dictionary pools remain valid. `MGet` returns results in the same order as the input keys and groups keys by shard internally to avoid repeatedly acquiring the same shard pointer.
+
+## Consistency Model
+
+The index provides single-key snapshot semantics:
+
+- A lookup observes one shard state.
+- Within that shard, it sees one complete row version.
+- A lookup never observes a partially encoded row.
+- Different shards may switch to a new full artifact at different times during a full update.
+
+This intentionally does not guarantee that a multi-key request across shards observes one global full version. That stronger guarantee would require a global manifest and would increase memory pressure during full updates.
+
 ## Core Architecture
 
 The index is sharded by primary key. Each shard can be loaded, compacted, and switched independently.
@@ -52,16 +101,25 @@ Get(primary_key)
 
 Each Kafka upsert is a complete row. A delta hit returns a full value, so the read path never merges fields from base and delta.
 
-## Consistency Model
+## Runtime Schema
 
-The index provides single-key snapshot semantics:
+Schema is a runtime object and is included in every full artifact. Each shard state binds to one schema version and compiled row layout.
 
-- A lookup observes one shard state.
-- Within that shard, it sees one complete row version.
-- A lookup never observes a partially encoded row.
-- Different shards may switch to a new full artifact at different times during a full update.
+Fields are identified by stable `FieldId`, not only by name:
 
-This intentionally does not guarantee that a multi-key request across shards observes one global full version. That stronger guarantee would require a global manifest and would increase memory pressure during full updates.
+```text
+FieldId -> name, type, repeated/list flag, nullable/default, encoding, status
+```
+
+Schema evolution rules:
+
+- Adding a field creates a new field ID.
+- Deleting a field marks the field tombstoned.
+- Field IDs are never reused.
+- Field type changes are rejected.
+- A row can only be interpreted with the compiled layout for its schema version.
+
+Clients should resolve field names to `FieldId` and `FieldAccessor<T>` outside the hot path. Accessors include schema-version checks and fail fast when used with an incompatible shard state.
 
 ## Realtime Incremental Updates
 
@@ -95,112 +153,6 @@ Upsert publication:
 Subsequent reads can see the new row immediately after step 4. Old row memory is not reclaimed inline. Replaced rows stay in the append-only arena until the realtime table generation is compacted and reader epochs prove no query can still reference the old row.
 
 The realtime table avoids application-level read locks. Slot creation uses CAS on the slot key state. Reads use open-addressing probe plus atomic pointer load in the common path.
-
-## Full Artifact and Sharding
-
-Offline full build produces a sharded artifact:
-
-```text
-IndexArtifact
-  -> Header
-  -> Metadata
-  -> RuntimeSchema
-  -> ShardDirectory
-       -> ShardArtifact[0]
-       -> ShardArtifact[1]
-       -> ...
-       -> ShardArtifact[N-1]
-```
-
-Each shard artifact contains:
-
-```text
-ShardArtifact
-  -> shard_id
-  -> row_count
-  -> FrozenPrimaryKeyIndex
-  -> RowArena
-  -> StringPools
-  -> ListPools
-  -> Checksums
-```
-
-Header and metadata include:
-
-```text
-magic
-format_version
-artifact_id
-schema_version
-shard_count
-build_time
-source_watermark
-section_directory
-checksum
-```
-
-`source_watermark` is the preferred starting point for Kafka replay. `build_time + safety_buffer` is only a fallback when the upstream source cannot provide a stronger watermark.
-
-The full snapshot should be mmap-friendly. Row arenas, string pools, list pools, and frozen primary-key indexes should be readable directly from the artifact where possible. This prevents full updates from requiring two complete heap-resident copies of the dataset.
-
-## Primary Key Index
-
-For full snapshots, the artifact stores an mmap-friendly frozen hash table:
-
-```text
-FrozenPrimaryKeyIndex: primary_key -> row_offset
-```
-
-`absl::flat_hash_map<uint64_t, RowOffset>` remains useful for compact and realtime delta snapshots, where heap overhead is bounded by recent updates instead of the whole dataset.
-
-## Row Layout and Value Encoding
-
-The primary storage is row-based because the dominant access pattern is fetching one record and reading all fields.
-
-```text
-FixedSizeRowSlot
-  -> presence_bitmap
-  -> fixed_area
-  -> ref_area
-```
-
-All rows for the same compiled schema version use the same slot size. This makes row addressing simple and cache-friendly:
-
-```text
-row_address = row_base + row_id * row_slot_size
-```
-
-Scalar fields are stored inline in `fixed_area`. Strings and lists are not stored as variable-length inline payloads. They are represented by fixed-width references in `ref_area` and resolved through external pools and arenas.
-
-String and list fields use field-level encoding policies:
-
-- `inline_ref`: store a fixed-width small-value reference in the row.
-- `dict`: store a dictionary ID in the row and the value in a typed pool.
-- `arena`: store an offset and length into a variable-length arena.
-- `list_dict`: deduplicate the whole list value.
-- `element_dict`: deduplicate repeated list elements, especially repeated strings.
-
-Encoding policy is configured per field. Offline builder may also choose defaults from Parquet statistics, but explicit configuration wins. Schema additions and deletions create a new compiled layout and may change `row_slot_size`; old shard states continue using their original layout.
-
-## Runtime Schema
-
-Schema is a runtime object and is included in every full artifact. Each shard state binds to one schema version and compiled row layout.
-
-Fields are identified by stable `FieldId`, not only by name:
-
-```text
-FieldId -> name, type, repeated/list flag, nullable/default, encoding, status
-```
-
-Schema evolution rules:
-
-- Adding a field creates a new field ID.
-- Deleting a field marks the field tombstoned.
-- Field IDs are never reused.
-- Field type changes are rejected.
-- A row can only be interpreted with the compiled layout for its schema version.
-
-Clients should resolve field names to `FieldId` and `FieldAccessor<T>` outside the hot path. Accessors include schema-version checks and fail fast when used with an incompatible shard state.
 
 ## Online Full Update
 
@@ -299,44 +251,6 @@ realtime_delta -> compact_delta -> full_snapshot
 
 If a shard's compact delta grows beyond configured thresholds, the component alerts and prioritizes that shard during the next full rebuild.
 
-## Online API Sketch
-
-```cpp
-class ForwardIndex {
- public:
-  std::optional<Row> Get(uint64_t primary_key) const;
-  std::vector<std::optional<Row>> MGet(absl::Span<const uint64_t> primary_keys) const;
-
-  LoadId LoadAsync(const LoadRequest& request);
-  LoadState GetLoadState(LoadId id) const;
-  bool CancelLoad(LoadId id);
-};
-
-class ShardState {
- public:
-  uint32_t ShardId() const;
-  uint64_t Generation() const;
-  const RuntimeSchema& Schema() const;
-  std::optional<Row> Get(uint64_t primary_key) const;
-};
-
-class Row {
- public:
-  bool Has(FieldId field_id) const;
-
-  template <typename T>
-  std::optional<T> Get(FieldId field_id) const;
-
-  template <typename T>
-  std::optional<T> Get(FieldAccessor<T> accessor) const;
-
-  template <typename T>
-  ListView<T> GetList(FieldId field_id) const;
-};
-```
-
-`ShardState` is an internal type; public query APIs do not expose `CurrentShard`. `Row` keeps the pinned shard state alive so references into row arenas and dictionary pools remain valid. `MGet` returns results in the same order as the input keys and groups keys by shard internally to avoid repeatedly acquiring the same shard pointer.
-
 ## Concurrency Model
 
 - Query threads read one immutable shard state plus its read-optimized realtime delta.
@@ -382,6 +296,92 @@ Failure examples:
 - Kafka ordering metadata is invalid.
 
 Operational state should expose active artifact ID, per-shard generation, rebuild progress, Kafka lag, delta sizes, schema version, and last error.
+
+## Full Artifact and Sharding
+
+Offline full build produces a sharded artifact:
+
+```text
+IndexArtifact
+  -> Header
+  -> Metadata
+  -> RuntimeSchema
+  -> ShardDirectory
+       -> ShardArtifact[0]
+       -> ShardArtifact[1]
+       -> ...
+       -> ShardArtifact[N-1]
+```
+
+Each shard artifact contains:
+
+```text
+ShardArtifact
+  -> shard_id
+  -> row_count
+  -> FrozenPrimaryKeyIndex
+  -> RowArena
+  -> StringPools
+  -> ListPools
+  -> Checksums
+```
+
+Header and metadata include:
+
+```text
+magic
+format_version
+artifact_id
+schema_version
+shard_count
+build_time
+source_watermark
+section_directory
+checksum
+```
+
+`source_watermark` is the preferred starting point for Kafka replay. `build_time + safety_buffer` is only a fallback when the upstream source cannot provide a stronger watermark.
+
+The full snapshot should be mmap-friendly. Row arenas, string pools, list pools, and frozen primary-key indexes should be readable directly from the artifact where possible. This prevents full updates from requiring two complete heap-resident copies of the dataset.
+
+## Primary Key Index
+
+For full snapshots, the artifact stores an mmap-friendly frozen hash table:
+
+```text
+FrozenPrimaryKeyIndex: primary_key -> row_offset
+```
+
+`absl::flat_hash_map<uint64_t, RowOffset>` remains useful for compact and realtime delta snapshots, where heap overhead is bounded by recent updates instead of the whole dataset.
+
+## Row Layout and Value Encoding
+
+The primary storage is row-based because the dominant access pattern is fetching one record and reading all fields.
+
+```text
+FixedSizeRowSlot
+  -> presence_bitmap
+  -> fixed_area
+  -> ref_area
+```
+
+All rows for the same compiled schema version use the same slot size. This makes row addressing simple and cache-friendly:
+
+```text
+row_address = row_base + row_id * row_slot_size
+```
+
+Scalar fields are stored inline in `fixed_area`. Strings and lists are not stored as variable-length inline payloads. They are represented by fixed-width references in `ref_area` and resolved through external pools and arenas.
+
+String and list fields use field-level encoding policies:
+
+- `inline_ref`: store a fixed-width small-value reference in the row.
+- `dict`: store a dictionary ID in the row and the value in a typed pool.
+- `arena`: store an offset and length into a variable-length arena.
+- `list_dict`: deduplicate the whole list value.
+- `element_dict`: deduplicate repeated list elements, especially repeated strings.
+
+Encoding policy is configured per field. Offline builder may also choose defaults from Parquet statistics, but explicit configuration wins. Schema additions and deletions create a new compiled layout and may change `row_slot_size`; old shard states continue using their original layout.
 
 ## Testing Strategy
 

@@ -20,6 +20,55 @@ value schema 按 schema version 固定，但 schema 本身支持运行期热加�
 - 第一版不提供跨所有 shard 的全局多 key 快照隔离。核心语义是单 key 查询一致性。
 - 第一版不针对字段扫描场景优化。核心访问模式是点查一条记录，并读取全部字段。
 
+## 在线 API 草图
+
+```cpp
+class ForwardIndex {
+ public:
+  std::optional<Row> Get(uint64_t primary_key) const;
+  std::vector<std::optional<Row>> MGet(absl::Span<const uint64_t> primary_keys) const;
+
+  LoadId LoadAsync(const LoadRequest& request);
+  LoadState GetLoadState(LoadId id) const;
+  bool CancelLoad(LoadId id);
+};
+
+class ShardState {
+ public:
+  uint32_t ShardId() const;
+  uint64_t Generation() const;
+  const RuntimeSchema& Schema() const;
+  std::optional<Row> Get(uint64_t primary_key) const;
+};
+
+class Row {
+ public:
+  bool Has(FieldId field_id) const;
+
+  template <typename T>
+  std::optional<T> Get(FieldId field_id) const;
+
+  template <typename T>
+  std::optional<T> Get(FieldAccessor<T> accessor) const;
+
+  template <typename T>
+  ListView<T> GetList(FieldId field_id) const;
+};
+```
+
+`ShardState` 是内部类型；public query API 不暴露 `CurrentShard`。`Row` 必须持有 pinned shard state，保证 row arena 和 dictionary pool 中的引用在 row 生命周期内始终有效。`MGet` 的返回结果与输入 keys 保持相同顺序，内部按 shard 对 key 分组，避免重复 acquire 同一个 shard pointer。
+
+## 一致性模型
+
+索引提供单 key 快照语义：
+
+- 一次 lookup 只观察一个 shard state。
+- 在该 shard 内，lookup 看到一个完整 row version。
+- lookup 永远不会看到部分编码完成的 row。
+- 全量更新期间，不同 shard 可以在不同时间切换到新的 full artifact。
+
+设计刻意不保证跨 shard 的多 key 请求观察同一个全局 full version。更强的保证需要全局 manifest，也会增加全量更新时的内存压力。
+
 ## 核心架构
 
 索引按 primary key 分 shard。每个 shard 可以独立加载、压实和切换。
@@ -52,16 +101,25 @@ Get(primary_key)
 
 每条 Kafka upsert 都是完整 row。命中 delta 后即可返回完整 value，所以读路径永远不需要把 base 和 delta 的字段做合并。
 
-## 一致性模型
+## 运行期 Schema
 
-索引提供单 key 快照语义：
+schema 是运行期对象，并包含在每个全量 artifact 中。每个 shard state 绑定一个 schema version 和 compiled row layout。
 
-- 一次 lookup 只观察一个 shard state。
-- 在该 shard 内，lookup 看到一个完整 row version。
-- lookup 永远不会看到部分编码完成的 row。
-- 全量更新期间，不同 shard 可以在不同时间切换到新的 full artifact。
+字段使用稳定的 `FieldId` 标识，而不仅仅依赖字段名：
 
-设计刻意不保证跨 shard 的多 key 请求观察同一个全局 full version。更强的保证需要全局 manifest，也会增加全量更新时的内存压力。
+```text
+FieldId -> name, type, repeated/list flag, nullable/default, encoding, status
+```
+
+schema 演进规则：
+
+- 新增字段会创建新的 field ID。
+- 删除字段会把字段标记为 tombstoned。
+- field ID 永不复用。
+- 字段类型变更会被拒绝。
+- row 只能用它所属 schema version 的 compiled layout 解释。
+
+客户端应在热路径外把字段名解析成 `FieldId` 和 `FieldAccessor<T>`。accessor 携带 schema-version 校验；当它被用于不兼容的 shard state 时 fail fast。
 
 ## 实时增量更新
 
@@ -95,112 +153,6 @@ upsert 发布流程：
 第 4 步完成后，后续读请求即可看到新 row。旧 row memory 不在写入路径上立即回收；被替换的 row 会保留在 append-only arena 中，直到 realtime table generation 完成 compaction，并且 reader epoch 证明没有查询还可能引用旧 row 后再释放。
 
 realtime table 避免读路径应用层锁。slot 创建使用 CAS 更新 slot key state；读路径 common path 是 open-addressing probe 加 atomic pointer load。
-
-## 全量 Artifact 与分片
-
-离线全量构建输出 sharded artifact：
-
-```text
-IndexArtifact
-  -> Header
-  -> Metadata
-  -> RuntimeSchema
-  -> ShardDirectory
-       -> ShardArtifact[0]
-       -> ShardArtifact[1]
-       -> ...
-       -> ShardArtifact[N-1]
-```
-
-每个 shard artifact 包含：
-
-```text
-ShardArtifact
-  -> shard_id
-  -> row_count
-  -> FrozenPrimaryKeyIndex
-  -> RowArena
-  -> StringPools
-  -> ListPools
-  -> Checksums
-```
-
-Header 和 metadata 包含：
-
-```text
-magic
-format_version
-artifact_id
-schema_version
-shard_count
-build_time
-source_watermark
-section_directory
-checksum
-```
-
-`source_watermark` 是 Kafka replay 起点的首选依据。只有当上游无法提供更强 watermark 时，才用 `build_time + safety_buffer` 作为兜底方案。
-
-full snapshot 应尽量 mmap-friendly。row arena、string pools、list pools 和 frozen primary-key index 应尽可能直接从 artifact 读取。这样全量更新不需要两份完整数据同时 heap 常驻。
-
-## 主键索引
-
-full snapshot 的 artifact 存储 mmap-friendly 的 frozen hash table：
-
-```text
-FrozenPrimaryKeyIndex: primary_key -> row_offset
-```
-
-`absl::flat_hash_map<uint64_t, RowOffset>` 仍适合 compact delta 和 realtime delta snapshot，因为它们的 heap 开销只由近期更新决定，而不是全量数据集。
-
-## Row Layout 与 Value Encoding
-
-主存储采用 row-based 布局，因为主访问模式是点查一条记录并读取全部字段。
-
-```text
-FixedSizeRowSlot
-  -> presence_bitmap
-  -> fixed_area
-  -> ref_area
-```
-
-同一个 compiled schema version 下，所有 row 使用统一 slot size。这样 row 地址计算简单，cache 行为也更稳定：
-
-```text
-row_address = row_base + row_id * row_slot_size
-```
-
-scalar 字段存储在 `fixed_area` 中。string 和 list 不作为变长 payload 直接内联在 row 内，而是在 `ref_area` 中存固定宽度引用，再通过外部 pool 和 arena 解析。
-
-string 和 list 字段使用字段级 encoding policy：
-
-- `inline_ref`：row 内存固定宽度的小值引用。
-- `dict`：row 内存 dictionary ID，真实值在 typed pool 中。
-- `arena`：row 内存 variable-length arena 的 offset 和 length。
-- `list_dict`：对整个 list value 做去重。
-- `element_dict`：对重复 list 元素做去重，尤其适合重复 string 元素。
-
-encoding policy 按字段配置。离线 builder 也可以基于 Parquet 统计信息选择默认策略，但显式配置优先。schema 新增和删除字段会产生新的 compiled layout，并可能改变 `row_slot_size`；旧 shard state 继续使用自己的原始 layout。
-
-## 运行期 Schema
-
-schema 是运行期对象，并包含在每个全量 artifact 中。每个 shard state 绑定一个 schema version 和 compiled row layout。
-
-字段使用稳定的 `FieldId` 标识，而不仅仅依赖字段名：
-
-```text
-FieldId -> name, type, repeated/list flag, nullable/default, encoding, status
-```
-
-schema 演进规则：
-
-- 新增字段会创建新的 field ID。
-- 删除字段会把字段标记为 tombstoned。
-- field ID 永不复用。
-- 字段类型变更会被拒绝。
-- row 只能用它所属 schema version 的 compiled layout 解释。
-
-客户端应在热路径外把字段名解析成 `FieldId` 和 `FieldAccessor<T>`。accessor 携带 schema-version 校验；当它被用于不兼容的 shard state 时 fail fast。
 
 ## 在线全量更新
 
@@ -299,44 +251,6 @@ realtime_delta -> compact_delta -> full_snapshot
 
 如果某个 shard 的 compact delta 超过配置阈值，组件报警并在下一次 full rebuild 中优先处理该 shard。
 
-## 在线 API 草图
-
-```cpp
-class ForwardIndex {
- public:
-  std::optional<Row> Get(uint64_t primary_key) const;
-  std::vector<std::optional<Row>> MGet(absl::Span<const uint64_t> primary_keys) const;
-
-  LoadId LoadAsync(const LoadRequest& request);
-  LoadState GetLoadState(LoadId id) const;
-  bool CancelLoad(LoadId id);
-};
-
-class ShardState {
- public:
-  uint32_t ShardId() const;
-  uint64_t Generation() const;
-  const RuntimeSchema& Schema() const;
-  std::optional<Row> Get(uint64_t primary_key) const;
-};
-
-class Row {
- public:
-  bool Has(FieldId field_id) const;
-
-  template <typename T>
-  std::optional<T> Get(FieldId field_id) const;
-
-  template <typename T>
-  std::optional<T> Get(FieldAccessor<T> accessor) const;
-
-  template <typename T>
-  ListView<T> GetList(FieldId field_id) const;
-};
-```
-
-`ShardState` 是内部类型；public query API 不暴露 `CurrentShard`。`Row` 必须持有 pinned shard state，保证 row arena 和 dictionary pool 中的引用在 row 生命周期内始终有效。`MGet` 的返回结果与输入 keys 保持相同顺序，内部按 shard 对 key 分组，避免重复 acquire 同一个 shard pointer。
-
 ## 并发模型
 
 - 查询线程读取一个不可变 shard state 及其读优化 realtime delta。
@@ -382,6 +296,92 @@ load、replay、compaction 和 shard cutover 必须 fail closed。任一步骤�
 - Kafka ordering metadata 无效。
 
 运行状态应暴露 active artifact ID、per-shard generation、rebuild progress、Kafka lag、delta sizes、schema version 和 last error。
+
+## 全量 Artifact 与分片
+
+离线全量构建输出 sharded artifact：
+
+```text
+IndexArtifact
+  -> Header
+  -> Metadata
+  -> RuntimeSchema
+  -> ShardDirectory
+       -> ShardArtifact[0]
+       -> ShardArtifact[1]
+       -> ...
+       -> ShardArtifact[N-1]
+```
+
+每个 shard artifact 包含：
+
+```text
+ShardArtifact
+  -> shard_id
+  -> row_count
+  -> FrozenPrimaryKeyIndex
+  -> RowArena
+  -> StringPools
+  -> ListPools
+  -> Checksums
+```
+
+Header 和 metadata 包含：
+
+```text
+magic
+format_version
+artifact_id
+schema_version
+shard_count
+build_time
+source_watermark
+section_directory
+checksum
+```
+
+`source_watermark` 是 Kafka replay 起点的首选依据。只有当上游无法提供更强 watermark 时，才用 `build_time + safety_buffer` 作为兜底方案。
+
+full snapshot 应尽量 mmap-friendly。row arena、string pools、list pools 和 frozen primary-key index 应尽可能直接从 artifact 读取。这样全量更新不需要两份完整数据同时 heap 常驻。
+
+## 主键索引
+
+full snapshot 的 artifact 存储 mmap-friendly 的 frozen hash table：
+
+```text
+FrozenPrimaryKeyIndex: primary_key -> row_offset
+```
+
+`absl::flat_hash_map<uint64_t, RowOffset>` 仍适合 compact delta 和 realtime delta snapshot，因为它们的 heap 开销只由近期更新决定，而不是全量数据集。
+
+## Row Layout 与 Value Encoding
+
+主存储采用 row-based 布局，因为主访问模式是点查一条记录并读取全部字段。
+
+```text
+FixedSizeRowSlot
+  -> presence_bitmap
+  -> fixed_area
+  -> ref_area
+```
+
+同一个 compiled schema version 下，所有 row 使用统一 slot size。这样 row 地址计算简单，cache 行为也更稳定：
+
+```text
+row_address = row_base + row_id * row_slot_size
+```
+
+scalar 字段存储在 `fixed_area` 中。string 和 list 不作为变长 payload 直接内联在 row 内，而是在 `ref_area` 中存固定宽度引用，再通过外部 pool 和 arena 解析。
+
+string 和 list 字段使用字段级 encoding policy：
+
+- `inline_ref`：row 内存固定宽度的小值引用。
+- `dict`：row 内存 dictionary ID，真实值在 typed pool 中。
+- `arena`：row 内存 variable-length arena 的 offset 和 length。
+- `list_dict`：对整个 list value 做去重。
+- `element_dict`：对重复 list 元素做去重，尤其适合重复 string 元素。
+
+encoding policy 按字段配置。离线 builder 也可以基于 Parquet 统计信息选择默认策略，但显式配置优先。schema 新增和删除字段会产生新的 compiled layout，并可能改变 `row_slot_size`；旧 shard state 继续使用自己的原始 layout。
 
 ## 测试策略
 
