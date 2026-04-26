@@ -224,7 +224,7 @@ RebuildGeneration
 ```text
 Live Apply
   -> 消费当前 Kafka stream
-  -> 立即写入仍归 ActiveGeneration 所有的 shards
+  -> 立即写入 ActiveGeneration shards
   -> 对仍指向 ActiveGeneration 的 shard 作为 authoritative visible stream
 
 Rebuild Catch-up
@@ -233,18 +233,17 @@ Rebuild Catch-up
   -> shard 切换到 RebuildGeneration 后，作为该 shard 的 authoritative visible stream
 ```
 
-这两条流实现成两个独立 Kafka consumer。rebuild 期间，两个 consumer 都保持全局运行。Live Apply 只发布仍归 ActiveGeneration 所有的 shard。Rebuild Catch-up 从 watermark `W` 开始持续写 RebuildGeneration 的所有 shard，直到所有 shard 完成切换。某个 shard 切换后，Rebuild Catch-up 成为该 shard 的 active generation consumer。
+这两条流实现成两个独立 Kafka consumer。rebuild 期间，两个 consumer 都保持全局运行。Live Apply 持续写 ActiveGeneration 的所有 shard，直到整个 rebuild 完成。Rebuild Catch-up 从 watermark `W` 开始持续写 RebuildGeneration 的所有 shard，直到所有 shard 完成切换。某个 shard 切换后，Rebuild Catch-up 成为该 shard 的 active generation consumer；Live Apply 写入旧 ActiveGeneration shard 的数据不再 serving-visible。
 
 单 shard 切换流程：
 
 ```text
 1. 从 sharded artifact 加载 shard_i 的 new_full。
 2. 确认 RebuildGeneration shard_i 已追过 Live Apply 为 shard_i 发布过的最新 source position。
-3. 原子标记 shard_i 归 RebuildGeneration 所有。
-4. 把 new_full_i 绑定到 RebuildGeneration shard_i。
-5. 原子替换 active_shards[i] 为 RebuildGeneration shard_i。
-6. 两个 Kafka consumer 继续保持全局运行。
-7. 等 reader drain 后释放旧 shard。
+3. 把 new_full_i 绑定到 RebuildGeneration shard_i。
+4. 原子替换 active_shards[i] 为 RebuildGeneration shard_i。
+5. 两个 Kafka consumer 继续保持全局运行。
+6. 等 reader drain 后释放旧 shard。
 ```
 
 shard_i 切换瞬间：
@@ -262,7 +261,7 @@ old_full + old_realtime_delta
 
 它们的 RebuildGeneration realtime delta 会在后台继续积累，直到各自完成 cutover。
 
-shard 切换后，该 shard 的查询读取 RebuildGeneration。Live Apply 继续全局消费，直到整个 rebuild 完成，但它跳过已切换 shard 的发布。Rebuild Catch-up 是已切换 shard 的 serving-visible stream，并且必须按照配置的 lag threshold 保持追平。
+shard 切换后，该 shard 的查询读取 RebuildGeneration。Live Apply 继续全局消费并写入 ActiveGeneration，直到整个 rebuild 完成，但这些写入对已切换 shard 不再 serving-visible。Rebuild Catch-up 是已切换 shard 的 serving-visible stream，并且必须按照配置的 lag threshold 保持追平。
 
 ## Kafka 顺序要求
 

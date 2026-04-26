@@ -224,7 +224,7 @@ Two logical update streams are required:
 ```text
 Live Apply
   -> consumes current Kafka stream
-  -> writes immediately to shards still owned by ActiveGeneration
+  -> writes immediately to ActiveGeneration shards
   -> remains the authoritative visible stream for shards that still point to ActiveGeneration
 
 Rebuild Catch-up
@@ -233,18 +233,17 @@ Rebuild Catch-up
   -> becomes the authoritative visible stream for a shard after that shard switches to RebuildGeneration
 ```
 
-The two streams are implemented as two independent Kafka consumers. During rebuild, both consumers keep running globally. Live Apply publishes only shards still owned by ActiveGeneration. Rebuild Catch-up writes RebuildGeneration for every shard from watermark `W` until all shards have switched. After a shard switches, Rebuild Catch-up is the active generation consumer for that shard.
+The two streams are implemented as two independent Kafka consumers. During rebuild, both consumers keep running globally. Live Apply continues writing ActiveGeneration for every shard until the entire rebuild finishes. Rebuild Catch-up writes RebuildGeneration for every shard from watermark `W` until all shards have switched. After a shard switches, Rebuild Catch-up is the active generation consumer for that shard, while Live Apply's writes to the old ActiveGeneration shard are no longer serving-visible.
 
 Per-shard cutover:
 
 ```text
 1. Load new_full for shard_i from the sharded artifact.
 2. Ensure RebuildGeneration shard_i has replayed through the latest source position published by Live Apply for shard_i.
-3. Atomically mark shard_i as owned by RebuildGeneration.
-4. Attach new_full_i to RebuildGeneration shard_i.
-5. Atomically replace active_shards[i] with RebuildGeneration shard_i.
-6. Keep both Kafka consumers running globally.
-7. Release the old shard when readers drain.
+3. Attach new_full_i to RebuildGeneration shard_i.
+4. Atomically replace active_shards[i] with RebuildGeneration shard_i.
+5. Keep both Kafka consumers running globally.
+6. Release the old shard when readers drain.
 ```
 
 At the moment shard_i switches:
@@ -262,7 +261,7 @@ old_full + old_realtime_delta
 
 Their RebuildGeneration realtime deltas continue accumulating in the background until their own cutover.
 
-After a shard switches, queries for that shard read RebuildGeneration. Live Apply continues consuming globally until the rebuild completes, but it skips publication for switched shards. Rebuild Catch-up is the serving-visible stream for switched shards and must stay caught up according to the configured lag threshold.
+After a shard switches, queries for that shard read RebuildGeneration. Live Apply continues consuming and writing ActiveGeneration globally until the rebuild completes, but those writes are no longer serving-visible for switched shards. Rebuild Catch-up is the serving-visible stream for switched shards and must stay caught up according to the configured lag threshold.
 
 ## Kafka Ordering Requirements
 
