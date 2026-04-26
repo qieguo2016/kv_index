@@ -164,22 +164,29 @@ low-latency mode: frozen hash table view
 The primary storage is row-based because the dominant access pattern is fetching one record and reading most or all fields.
 
 ```text
-RowRecord
-  -> row_size
+FixedSizeRowSlot
   -> presence_bitmap
   -> fixed_area
-  -> var_or_ref_area
+  -> ref_area
 ```
 
-Scalar fields are stored inline in `fixed_area`. Strings and lists use field-level encoding policies:
+All rows for the same compiled schema version use the same slot size. This makes row addressing simple and cache-friendly:
 
-- `inline`: store short values directly in the row.
+```text
+row_address = row_base + row_id * row_slot_size
+```
+
+Scalar fields are stored inline in `fixed_area`. Strings and lists are not stored as variable-length inline payloads. They are represented by fixed-width references in `ref_area` and resolved through external pools or arenas.
+
+String and list fields use field-level encoding policies:
+
+- `inline_ref`: store a fixed-width small-value reference in the row.
 - `dict`: store a dictionary ID in the row and the value in a string or list pool.
 - `arena`: store an offset and length into a variable-length arena.
 - `list_dict`: deduplicate the whole list value.
 - `element_dict`: deduplicate repeated list elements, especially repeated strings.
 
-Encoding policy is configured per field. Offline builder may also choose defaults from Parquet statistics, but explicit configuration wins.
+Encoding policy is configured per field. Offline builder may also choose defaults from Parquet statistics, but explicit configuration wins. Adding or deleting fields creates a new compiled layout and may change `row_slot_size`; old shard states continue using their original layout.
 
 ## Runtime Schema
 
@@ -285,10 +292,12 @@ Realtime delta grows with live updates. Each shard should compact independently:
 ```text
 RealtimeDeltaAtomicTable
   -> scan latest RowRef per key
-  -> build CompactDeltaSnapshot
+  -> build CompactDeltaSnapshot keyed by primary_key
   -> create a fresh empty RealtimeDeltaAtomicTable
   -> atomically publish new ShardState
 ```
+
+`CompactDeltaSnapshot` stores complete updated row slots keyed by primary key for records changed since the full snapshot. `FullSnapshotView` remains read-only.
 
 The read path remains fixed:
 
@@ -413,7 +422,7 @@ Performance tests:
 
 ## Open Decisions
 
-- Exact binary encoding for `RowRecord` alignment and endianness.
+- Exact binary encoding for `FixedSizeRowSlot` alignment and endianness.
 - Initial set of scalar and list element types.
 - Shard count and shard assignment function.
 - Whether full shard primary-key index starts with sorted array only or frozen hash table.

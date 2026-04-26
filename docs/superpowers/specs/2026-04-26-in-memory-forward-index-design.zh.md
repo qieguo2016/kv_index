@@ -164,22 +164,29 @@ low-latency mode: frozen hash table view
 主存储采用 row-based 布局，因为主访问模式是点查一条记录并读取大部分或全部字段。
 
 ```text
-RowRecord
-  -> row_size
+FixedSizeRowSlot
   -> presence_bitmap
   -> fixed_area
-  -> var_or_ref_area
+  -> ref_area
 ```
 
-scalar 字段存储在 `fixed_area` 中。string 和 list 使用字段级 encoding policy：
+同一个 compiled schema version 下，所有 row 使用统一 slot size。这样 row 地址计算简单，cache 行为也更稳定：
 
-- `inline`：短值直接存储在 row 内。
+```text
+row_address = row_base + row_id * row_slot_size
+```
+
+scalar 字段存储在 `fixed_area` 中。string 和 list 不作为变长 payload 直接内联在 row 内，而是在 `ref_area` 中存固定宽度引用，再通过外部 pool 或 arena 解析。
+
+string 和 list 字段使用字段级 encoding policy：
+
+- `inline_ref`：row 内存固定宽度的小值引用。
 - `dict`：row 内存 dictionary ID，真实值在 string 或 list pool 中。
 - `arena`：row 内存 variable-length arena 的 offset 和 length。
 - `list_dict`：对整个 list value 做去重。
 - `element_dict`：对重复 list 元素做去重，尤其适合重复 string 元素。
 
-encoding policy 按字段配置。离线 builder 也可以基于 Parquet 统计信息选择默认策略，但显式配置优先。
+encoding policy 按字段配置。离线 builder 也可以基于 Parquet 统计信息选择默认策略，但显式配置优先。新增或删除字段会产生新的 compiled layout，并可能改变 `row_slot_size`；旧 shard state 继续使用自己的原始 layout。
 
 ## 运行期 Schema
 
@@ -285,10 +292,12 @@ realtime delta 会随 live 更新增长。每个 shard 应独立 compact：
 ```text
 RealtimeDeltaAtomicTable
   -> scan latest RowRef per key
-  -> build CompactDeltaSnapshot
+  -> build CompactDeltaSnapshot keyed by primary_key
   -> create a fresh empty RealtimeDeltaAtomicTable
   -> atomically publish new ShardState
 ```
+
+`CompactDeltaSnapshot` 按 primary key 存储自 full snapshot 以来发生变更记录的完整更新后 row slot。`FullSnapshotView` 保持只读。
 
 读路径层数保持固定：
 
@@ -413,7 +422,7 @@ load、replay、compaction 或 shard cutover 必须 fail closed。任一步骤�
 
 ## 待决问题
 
-- `RowRecord` 的精确二进制编码、对齐方式和字节序。
+- `FixedSizeRowSlot` 的精确二进制编码、对齐方式和字节序。
 - 第一版支持的 scalar 类型和 list element 类型集合。
 - shard count 和 shard assignment function。
 - full shard primary-key index 第一版只用 sorted array，还是直接支持 frozen hash table。
