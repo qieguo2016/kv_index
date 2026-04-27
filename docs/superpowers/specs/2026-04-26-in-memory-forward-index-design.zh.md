@@ -56,7 +56,7 @@ class Row {
 };
 ```
 
-`ShardState` 是内部类型；public query API 不暴露 `CurrentShard`。`Row` 必须持有 pinned shard state，保证 row arena 和 dictionary pool 中的引用在 row 生命周期内始终有效。`MGet` 的返回结果与输入 keys 保持相同顺序，内部按 shard 对 key 分组，避免重复 acquire 同一个 shard pointer。
+`ShardState` 是内部类型；public query API 不暴露 `CurrentShard`。`Row` 必须持有 pinned shard state，保证 row arena 和 dictionary pool 中的引用在 row 生命周期内始终有效。scalar field 读取总是 copy 出去；string/list 字段可以按 API 选择返回 owning copy 或 pinned view。view 引用的生命周期不能超过持有 backing pin 的 `Row` 生命周期。`MGet` 的返回结果与输入 keys 保持相同顺序，内部按 shard 对 key 分组，避免重复 acquire 同一个 shard pointer。
 
 ## 一致性模型
 
@@ -116,6 +116,25 @@ Get(primary_key)
 
 `FullSnapshotView` 和 `CompactDeltaSnapshot` 都是薄 wrapper，读侧都委托给 `ImmutableRowSnapshotView`。两者使用相同的 primary-key lookup、row decode、string/list pool 解析和 schema/layout 校验逻辑；差异只在 backing memory 和附加 metadata。外部 `AsyncLoad` 发布的 full snapshot 使用 mmap-backed artifact；内部 `Full Rebase` 生成的 full snapshot 可以使用 owned backing。
 
+所有 shard 使用相同的 published container 结构。delta compaction、内部 `Full Rebase` 和外部 `AsyncLoad` 也使用同一类 generation 切换模型：
+
+```text
+1. 创建 NewGeneration / NewShardState。
+2. Kafka upsert 从切换起点开始同时写入当前 serving generation 和 new generation。
+3. 后台只扫描切换起点之前已经不可变的输入，构建 new generation 的 compact/full 层。
+4. 确认 new generation 的实时增量已经追上当前 serving generation。
+5. 原子切换 active_shards[i]，读路径开始读取 new generation。
+6. 等 reader drain 后下线旧 generation。
+```
+
+因此读路径始终保持：
+
+```text
+realtime_delta -> compact_delta -> full_snapshot
+```
+
+区别只在后台构建 new generation 时扫描哪些不可变输入。
+
 ## 运行期 Schema
 
 schema 是运行期对象，并包含在每个全量 artifact 中。每个 shard state 绑定一个 schema version 和 compiled row layout。
@@ -129,10 +148,12 @@ FieldId -> name, type, repeated/list flag, nullable/default, encoding, status
 schema 演进规则：
 
 - 新增字段会创建新的 field ID。
-- 删除字段会把字段标记为 tombstoned。
+- 删除字段会把字段标记为 deleted。
 - field ID 永不复用。
 - 字段类型变更会被拒绝。
 - row 只能用它所属 schema version 的 compiled layout 解释。
+
+外部 `AsyncLoad` 切换 schema/layout 时，旧 active generation 仍按旧 schema 解码 Kafka row：新增字段会被忽略，已删除字段仍按旧 layout 处理直到该 shard 切走。new rebuild generation 按新 schema 编码 Kafka row；删除字段按照新 layout 处理，不再写入新的 row slot。每个 shard 的 row 必须始终用其所属 generation 绑定的 schema/layout 解释。
 
 客户端应在热路径外把字段名解析成 `FieldId` 和 `FieldAccessor<T>`。accessor 携带 schema-version 校验；当它被用于不兼容的 shard state 时 fail fast。
 
@@ -225,6 +246,8 @@ realtime table 避免读路径应用层锁。slot 创建使用 CAS 更新 slot k
 
 ### 外部 AsyncLoad
 
+当离线流程产出了全量索引之后，SDK集成方调用SDK的AsyncLoad接口触发全量更新。
+
 ```text
 ActiveGeneration
   -> active ShardState[0..N-1]
@@ -248,17 +271,19 @@ Live Apply
 
 Rebuild Catch-up
   -> 从 full_watermark W 开始消费
-  -> 把同样 row format 写入 RebuildGeneration shards
+  -> 按 RebuildGeneration 绑定的 schema/layout 写入 RebuildGeneration shards
   -> shard 切换到 RebuildGeneration 后，作为该 shard 的 authoritative visible stream
 ```
 
 这两条流实现成两个独立 Kafka consumer。rebuild 期间，两个 consumer 都保持全局运行。Live Apply 持续写 ActiveGeneration 的所有 shard，直到整个 rebuild 完成。Rebuild Catch-up 从 watermark `W` 开始持续写 RebuildGeneration 的所有 shard，直到所有 shard 完成切换。某个 shard 切换后，Rebuild Catch-up 成为该 shard 的 active generation consumer；Live Apply 写入旧 ActiveGeneration shard 的数据不再 serving-visible。
 
+如果新 full artifact 携带新的 schema version，Live Apply 仍按旧 active generation schema 编码；Rebuild Catch-up 按新 rebuild generation schema 编码。这样同一条 Kafka upsert 在双写窗口内可以进入两个不同 layout 的 row store，但每个 generation 内部仍只用自己的 compiled layout 解释 row。
+
 单 shard 切换流程：
 
 ```text
 1. 从 sharded artifact 加载 shard_i 的 new_full。
-2. 确认 RebuildGeneration shard_i 已追过 Live Apply 为 shard_i 发布过的最新 source position。
+2. 确认 RebuildGeneration shard_i 的所有 Kafka partitions lag 都低于配置阈值，并且已追过 Live Apply 为 shard_i 发布过的安全 source position。
 3. 把 new_full_i 绑定到 RebuildGeneration shard_i。
 4. 原子替换 active_shards[i] 为 RebuildGeneration shard_i。
 5. 两个 Kafka consumer 继续保持全局运行。
@@ -280,13 +305,7 @@ old_full + old_realtime_delta
 
 它们的 RebuildGeneration realtime delta 会在后台继续积累，直到各自完成 cutover。
 
-shard 切换后，该 shard 的查询读取 RebuildGeneration。Live Apply 继续全局消费并写入 ActiveGeneration，直到整个 rebuild 完成，但这些写入对已切换 shard 不再 serving-visible。Rebuild Catch-up 是已切换 shard 的 serving-visible stream，并且必须按照配置的 lag threshold 保持追平。
-
-rebuild generation delta 限制：
-
-- warning：global rebuild delta bytes >= active full dataset 的 5%，默认约 5 GiB。
-- hard limit：global rebuild delta bytes >= active full dataset 的 10%，默认约 10 GiB，abort rebuild。
-- per-shard hard limit：rebuild delta bytes >= full shard bytes 的 20%，默认约 160 MiB；单 shard 超限时 abort rebuild 或优先处理该 shard。
+shard 切换后，该 shard 的查询读取 RebuildGeneration。Live Apply 继续全局消费并写入 ActiveGeneration，直到整个 rebuild 完成，但这些写入对已切换 shard 不再 serving-visible。Rebuild Catch-up 是已切换 shard 的 serving-visible stream，并且必须按照配置的 per-partition lag threshold 保持追平。cutover coordinator 需要按 Kafka partition 追踪 lag；只有该 shard 相关的所有 partitions 都低于阈值时，才能认为 rebuild catch-up 已经追上。
 
 shard cutover batch 默认：
 
@@ -296,27 +315,28 @@ shard cutover batch 默认：
 
 ### 内部 Full Rebase
 
-内部 `Full Rebase` 用于控制 compact delta 长期增长。它只处理单个 shard，并把该 shard 当前 sealed 的 `CompactDeltaSnapshot` 合并进 `FullSnapshotView`：
+内部 `Full Rebase` 用于控制 compact delta 长期增长。它只处理单个 shard，并把该 shard 当前 sealed 的 `CompactDeltaSnapshot` 合并进 `FullSnapshotView`。它仍遵循 generation 切换模型：rebase 期间 Kafka upsert 同时写入旧 serving generation 和 rebase generation；后台只扫描不可变的 compact/full 输入；rebase generation 追平后再切读。
 
 ```text
 before: full_snapshot + compact_delta + realtime_delta
-after:  rebased_full_snapshot + empty compact_delta + realtime_delta
+after:  rebased_full_snapshot + empty compact_delta + rebase_realtime_delta
 ```
 
 rebase 流程：
 
 ```text
 1. pin 当前 serving ShardState。
-2. 冻结当前 CompactDeltaSnapshot 作为 rebase input。
-3. 从 full_snapshot 顺序读取 rows，对 compact_delta 覆盖的 key 使用 compact row。
-4. 把合并后的完整 shard 写成新的 owned/mmap-capable full snapshot backing。
-5. 创建 empty CompactDeltaSnapshot。
-6. 复用当前 active RealtimeDeltaAtomicTable 作为最高优先级覆盖层。
-7. 原子替换 active_shards[i] 为 rebased ShardState。
-8. 等 reader drain 后释放旧 full 和旧 compact。
+2. 创建 rebase generation，包含 fresh empty RealtimeDeltaAtomicTable 和 empty CompactDeltaSnapshot。
+3. 从切换起点开始，Kafka upsert 同时写入当前 serving generation 和 rebase generation。
+4. 确认切换起点之前的 realtime 数据已经通过 delta compaction 进入 sealed CompactDeltaSnapshot；否则先完成一次 delta compaction。
+5. 先扫描 CompactDeltaSnapshot，再扫描 FullSnapshotView；key 冲突时 compact row 覆盖 full row。
+6. 把合并后的完整 shard 写成新的 owned/mmap-capable full snapshot backing。
+7. 确认 rebase generation 的 realtime delta 已追上当前 serving generation。
+8. 原子替换 active_shards[i] 为 rebased ShardState。
+9. 等 reader drain 后释放旧 full、旧 compact 和旧 realtime generation。
 ```
 
-`Full Rebase` 不消费外部 full watermark，也不切换 schema version。rebase 期间新 Kafka upsert 继续写 active realtime delta；发布后读路径仍保持：
+`Full Rebase` 不消费外部 full watermark，也不切换 schema version。rebase 期间的新 Kafka upsert 写入 rebase generation 的 realtime delta，并在切换后作为最高优先级覆盖层。发布后读路径仍保持：
 
 ```text
 realtime_delta -> compact_delta -> full_snapshot
@@ -324,11 +344,11 @@ realtime_delta -> compact_delta -> full_snapshot
 
 内部触发阈值按 shard 计算，满足任一条件即触发：
 
-- compact snapshot bytes >= full shard bytes 的 20%。
-- compact snapshot bytes >= 256 MiB。
-- compact snapshot unique keys >= shard row count 的 20%。
+- compact snapshot bytes >= full shard bytes 的 10%。
+- compact snapshot bytes >= 128 MiB。
+- compact snapshot unique keys >= shard row count 的 10%。
 
-默认 128 shards 下，单 shard full 约 800 MiB；通常会在 compact snapshot 约 160 MiB 或 unique keys 约 156K 时触发 `Full Rebase`。同一 shard 同一时刻只允许一个 rebase；外部 `AsyncLoad` 与内部 `Full Rebase` 冲突时，外部 `AsyncLoad` 优先，内部 rebase 取消或延后。
+同一 shard 同一时刻只允许一个 rebase；外部 `AsyncLoad` 与内部 `Full Rebase` 冲突时，外部 `AsyncLoad` 优先，内部 rebase 取消。
 
 ## Kafka 顺序要求
 
@@ -349,15 +369,30 @@ event_time + tie_breaker
 realtime delta 会随 live 更新增长。每个 shard 应独立 compact：
 
 ```text
-RealtimeDeltaAtomicTable
-  -> scan latest RowRef per key
-  -> SnapshotBuilder 构建 owned ImmutableRowSnapshot
-  -> 作为 CompactDeltaSnapshot 发布
-  -> create a fresh empty RealtimeDeltaAtomicTable
-  -> atomically publish new ShardState
+ActiveGeneration
+  -> full_snapshot + compact_delta + realtime_delta
+
+CompactGeneration
+  -> same full_snapshot
+  -> rebuilt compact_delta
+  -> fresh realtime_delta
 ```
 
-`CompactDeltaSnapshot` 按 primary key 存储自 full snapshot 以来发生变更记录的完整更新后 row slot。它与 `FullSnapshotView` 使用同一个 `ImmutableRowSnapshotView` 读接口；`FullSnapshotView` 的 backing 可以来自 mmap artifact 或内部 rebase 生成的 owned snapshot，`CompactDeltaSnapshot` 的 backing 来自 compaction 生成的 owned heap snapshot。
+delta compaction 也使用双写、切读、下线旧 generation 的流程：
+
+```text
+1. 记录 active realtime append-only buffer 的当前 offset 作为 compact boundary。
+2. 创建 CompactGeneration，包含 fresh empty RealtimeDeltaAtomicTable。
+3. 从 boundary 之后开始，Kafka upsert 同时写入 ActiveGeneration 和 CompactGeneration。
+4. 从 active realtime append-only buffer 的 boundary 向前扫描到开头；同一个 key 只保留第一个遇到的最新 RowRef。
+5. 继续扫描旧 CompactDeltaSnapshot；只补充尚未被 realtime scan 覆盖的 key。
+6. SnapshotBuilder 构建 owned ImmutableRowSnapshot，作为新的 CompactDeltaSnapshot。
+7. 确认 CompactGeneration 的 realtime delta 已追上 ActiveGeneration。
+8. 原子替换 active_shards[i] 为 CompactGeneration。
+9. 等 reader drain 后释放旧 realtime generation 和旧 compact snapshot。
+```
+
+`CompactDeltaSnapshot` 按 primary key 存储自 full snapshot 以来发生变更记录的完整更新后 row slot。新的 compact snapshot 等价于 `sealed realtime delta + old compact snapshot`；key 冲突时 sealed realtime row 覆盖 old compact row。它与 `FullSnapshotView` 使用同一个 `ImmutableRowSnapshotView` 读接口；`FullSnapshotView` 的 backing 可以来自 mmap artifact 或内部 rebase 生成的 owned snapshot，`CompactDeltaSnapshot` 的 backing 来自 compaction 生成的 owned heap snapshot。
 
 读路径层数保持固定：
 
@@ -394,6 +429,7 @@ realtime_delta -> compact_delta -> full_snapshot
 active full dataset
 + currently loaded new full shard batch
 + active realtime deltas
++ compaction/rebase generation realtime deltas during double-write windows
 + rebuild generation realtime deltas since watermark
 + compact deltas
 ```
@@ -556,6 +592,41 @@ OwnedSnapshotBacking
 
 `SnapshotBuilder` 可以在构建阶段使用 `absl::flat_hash_map`、vector sort 或其他临时结构收集 key 到 row offset 的映射；一旦 seal 成 `OwnedSnapshotBacking`，serving 读路径只看到 frozen index view。
 
+## 统一 Row Storage 抽象
+
+full、compact 和 realtime 三层都使用 index 与数据分离的 row store 抽象：
+
+```text
+PrimaryKeyIndex
+  -> primary_key -> RowLocator
+
+RowStorageView
+  -> RowLocator -> FixedSizeRowSlot
+  -> ValueRef16 -> string/list payload pools
+
+RowDecoder
+  -> RuntimeSchema + CompiledRowLayout + FixedSizeRowSlot + payload pools
+  -> Row
+```
+
+三层的差异只在 index 是否可变、backing 如何拥有内存：
+
+```text
+FullSnapshotView
+  -> FrozenPrimaryKeyIndexView
+  -> ImmutableRowSnapshotView
+
+CompactDeltaSnapshot
+  -> FrozenPrimaryKeyIndexView
+  -> ImmutableRowSnapshotView
+
+RealtimeDeltaAtomicTable
+  -> RealtimeAtomicHashMap
+  -> RealtimeRowStorageView
+```
+
+`RealtimeAtomicHashMap` serving-visible 的 value 是 atomic `RowRef*`，但 `RowRef` 语义上仍是一个 `RowLocator`：它定位 append-only row arena 中已经完整编码的 fixed row slot，并通过该 slot 内的 `ValueRef16` 解析 append-only string/list payload pools。读路径命中任意一层后，都使用同一套 schema/layout 校验、row decode 和 field accessor 逻辑；差异只在 full/compact 的 locator 是 frozen `row_offset`，realtime 的 locator 是 atomic 发布的 `RowRef*`。
+
 ## RealtimeAtomicHashMap
 
 `RealtimeAtomicHashMap` 是 `RealtimeDeltaAtomicTable` 的主键索引。它面向 read-heavy、write-light 的在线增量层，目标不是替代通用 hash map，而是在固定容量、无 erase、generation 级回收的约束下，提供无应用层读锁的稳定查询路径。
@@ -618,7 +689,7 @@ Slot
 
 - hash map 固定容量，不在 serving 热路径 rehash。
 - 每个 shard 按预估增量 key 数 reserve，默认 load factor 不应超过 50%-70%。
-- 接近容量阈值时触发 delta compaction，构建新的 `CompactDeltaSnapshot` 和空的 `RealtimeAtomicHashMap`，再发布新的 `ShardState`。
+- 接近容量阈值时触发 delta compaction，创建 `CompactGeneration`，构建新的 `CompactDeltaSnapshot` 和 fresh `RealtimeAtomicHashMap`，追平后再发布新的 `ShardState`。
 - 容量耗尽时 fail closed：拒绝继续发布该 shard 的新增 delta，报警并触发 compaction/rebuild；不能在读写热路径执行阻塞式扩容。
 
 内存与生命周期：
@@ -686,15 +757,21 @@ encoding policy 按字段配置。离线 builder 也可以基于 Parquet 统计�
 - 单 shard cutover 不影响其他 shard。
 - 尚未 cutover 的 shard 仍服务 old full 加 live realtime updates。
 - cutover 前积累的 RebuildGeneration realtime delta 在 shard 切换后可见。
+- 外部 rebuild cutover 只有在相关 Kafka partitions lag 都低于阈值后才允许执行。
 - 外部 `AsyncLoad` 能按 shard 切换 full artifact、schema version 和 rebuild realtime delta。
-- 内部 `Full Rebase` 能把 compact delta 合并进 full snapshot，并保留 active realtime delta 的最高优先级。
+- 外部 `AsyncLoad` 双写期间，旧 generation 忽略新增字段/删除字段变化，新 generation 按新 schema 编码。
+- 内部 `Full Rebase` 能把 compact delta 合并进 full snapshot，并保留 rebase realtime delta 的最高优先级。
+- 内部 `Full Rebase` 只扫描 immutable compact/full 输入，并通过 rebase realtime delta 保留切换窗口内的新 upsert。
 - 外部 `AsyncLoad` 与内部 `Full Rebase` 冲突时，外部 `AsyncLoad` 优先且内部 rebase 被取消或延后。
 - 同一个 generation 内，较旧的 source position 不能覆盖较新的 source position。
+- delta compaction 构建的新 compact snapshot 等价于 sealed realtime delta 覆盖 old compact snapshot。
+- delta compaction 双写窗口内的新 upsert 在 cutover 后仍可见。
 - 业务删除 row 会作为带 delete marker 字段的普通 row 返回。
 - schema 新增字段时，旧 snapshot 返回默认值，新 snapshot 返回实际值。
-- schema 删除字段时，field ID tombstone 且永不复用。
+- schema 删除字段时，field ID 标记为 deleted 且永不复用。
 - 已有 field ID 的类型变更会被拒绝。
 - dictionary string/list 字段能正确解码。
+- string/list pinned view 在 `Row` 生命周期内保持有效。
 - mmap-backed full snapshot、rebase-owned full snapshot 和 owned compact snapshot 的 row decode 行为一致。
 - artifact checksum 和 format validation fail closed。
 - delta compaction 后 lookup 结果保持不变。
