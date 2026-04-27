@@ -8,7 +8,7 @@
 uint64_t primary_key -> structured value
 ```
 
-组件面向高并发、读多写少的在线查询场景优化。Kafka upsert 被目标 shard 的 active generation consumer 本地发布成功后，后续查询必须立刻可见。读路径必须读取一个完整 row version，不能看到部分写入的 value。
+组件面向高并发、读多写少的在线查询场景优化。Kafka upsert 被目标 shard 的 active generation update stream 本地发布成功后，后续查询必须立刻可见。读路径必须读取一个完整 row version，不能看到部分写入的 value。
 
 value schema 按 schema version 固定，但 schema 本身支持运行期热加载。schema 演进只支持新增字段和删除字段；已有字段类型不能变更，field ID 永不复用。
 
@@ -23,10 +23,18 @@ value schema 按 schema version 固定，但 schema 本身支持运行期热加�
 ## 在线 API 草图
 
 ```cpp
+struct ForwardIndexOptions {
+  uint32_t shard_count = 128;
+  ThresholdConfig thresholds;
+  KafkaConsumerConfig kafka_consumer;
+};
+
 class ForwardIndex {
  public:
+  explicit ForwardIndex(const ForwardIndexOptions& options);
+
   std::optional<Row> Get(uint64_t primary_key) const;
-  std::vector<std::optional<Row>> MGet(absl::Span<const uint64_t> primary_keys) const;
+  std::vector<std::optional<Row>> MGet(const std::vector<uint64_t>& primary_keys) const;
 
   LoadId LoadAsync(const LoadRequest& request);
   LoadState GetLoadState(LoadId id) const;
@@ -39,6 +47,7 @@ class ShardState {
   uint64_t Generation() const;
   const RuntimeSchema& Schema() const;
   std::optional<Row> Get(uint64_t primary_key) const;
+  std::vector<std::optional<Row>> MGet(const std::vector<uint64_t>& primary_keys) const;
 };
 
 class Row {
@@ -56,7 +65,9 @@ class Row {
 };
 ```
 
-`ShardState` 是内部类型；public query API 不暴露 `CurrentShard`。`Row` 必须持有 pinned shard state，保证 row arena 和 dictionary pool 中的引用在 row 生命周期内始终有效。scalar field 读取总是 copy 出去；string/list 字段可以按 API 选择返回 owning copy 或 pinned view。view 引用的生命周期不能超过持有 backing pin 的 `Row` 生命周期。`MGet` 的返回结果与输入 keys 保持相同顺序，内部按 shard 对 key 分组，避免重复 acquire 同一个 shard pointer。
+`ForwardIndexOptions` 是 SDK 初始化入口，集中配置 shard count、delta compaction / full rebase / rebuild cutover 阈值，以及 Kafka consumer 参数。`ForwardIndex` 构造后持有这些配置，并用同一套配置创建内部 `KafkaUpdateConsumer` 和后台更新 coordinator。
+
+`ShardState` 是内部类型；public query API 不暴露 `CurrentShard`。`Row` 必须持有 pinned shard state，保证 row arena 和 dictionary pool 中的引用在 row 生命周期内始终有效。scalar field 读取总是 copy 出去；string/list 字段可以按 API 选择返回 owning copy 或 pinned view。view 引用的生命周期不能超过持有 backing pin 的 `Row` 生命周期。`ForwardIndex::MGet` 的返回结果与输入 keys 保持相同顺序，内部按 shard 对 key 分组，并对每个 shard 调用 `ShardState::MGet`，避免重复 acquire 同一个 shard pointer。`ShardState::MGet` 只处理已经属于该 shard 的 keys，并保持传入 shard-local keys 的顺序。
 
 ## 一致性模型
 
@@ -112,7 +123,7 @@ Get(primary_key)
   -> return Row
 ```
 
-每条 Kafka upsert 都是完整 row。命中 delta 后即可返回完整 value，所以读路径永远不需要把 base 和 delta 的字段做合并。
+每条 upsert 都是完整 row。命中 delta 后即可返回完整 value，所以读路径永远不需要把 base 和 delta 的字段做合并。
 
 `FullSnapshotView` 和 `CompactDeltaSnapshot` 都是薄 wrapper，读侧都委托给 `ImmutableRowSnapshotView`。两者使用相同的 primary-key lookup、row decode、string/list pool 解析和 schema/layout 校验逻辑；差异只在 backing memory 和附加 metadata。外部 `AsyncLoad` 发布的 full snapshot 使用 mmap-backed artifact；内部 `Full Rebase` 生成的 full snapshot 可以使用 owned backing。
 
@@ -222,7 +233,7 @@ RealtimeDeltaAtomicTable
 upsert 发布流程：
 
 ```text
-1. 解码并校验 Kafka row。
+1. 按目标 generation 的 schema/layout 解码并校验 Kafka row。
 2. 把完整 row 编码为一个不可变 RowRef：fixed row slot 写入 row arena，
    string/list payload 写入该 realtime generation 的 append-only payload pools，
    row slot 内只保存固定宽度引用。
@@ -234,6 +245,57 @@ upsert 发布流程：
 第 4 步完成后，后续读请求即可看到新 row。旧 row memory 不在写入路径上立即回收；被替换的 row 会保留在 append-only arena 中，直到 realtime table generation 完成 compaction，并且 reader epoch 证明没有查询还可能引用旧 row 后再释放。
 
 realtime table 避免读路径应用层锁。slot 创建使用 CAS 更新 slot key state；读路径 common path 是 open-addressing probe 加 atomic pointer load。hash table 的具体设计见 `RealtimeAtomicHashMap`。
+
+## Kafka Consumer 模块
+
+第一版只支持 Kafka，不引入可插拔数据源抽象。Kafka consumer 相关能力收敛到独立模块，避免 Kafka poll、seek、lag 和 offset commit 逻辑散落在索引更新流程中。该模块不包含索引逻辑：不解析 schema、不选择 generation、不写 realtime delta、不执行 shard cutover。
+
+层次关系：
+
+```text
+ForwardIndex SDK
+  -> UpdateCoordinator
+       -> KafkaUpdateConsumer
+       -> UpdateApplier
+       -> ShardCutoverCoordinator
+```
+
+`KafkaUpdateConsumer` 负责创建和持有 Kafka consumer、按 partition/offset seek、poll batch、暴露 partition lag/progress，并在 SDK 确认本地发布成功后 commit offset。`UpdateCoordinator` 调用 consumer 拉取 batch，再把消息交给 `UpdateApplier`；`UpdateApplier` 按目标 generation 绑定的 schema/layout 解码 row 并写 realtime delta。这样外部 `AsyncLoad` 双写窗口内，同一条 Kafka message 仍可以分别按旧 active generation layout 和新 rebuild generation layout 编码。
+
+建议接口：
+
+```cpp
+struct KafkaPartition {
+  std::string topic;
+  int32_t partition;
+};
+
+struct KafkaPosition {
+  KafkaPartition partition;
+  uint64_t offset;
+};
+
+struct KafkaUpsertMessage {
+  uint64_t primary_key;
+  KafkaPosition position;
+  absl::Cord raw_payload;
+  KafkaMessageMetadata metadata;
+};
+
+struct KafkaCheckpoint {
+  absl::flat_hash_map<KafkaPartition, KafkaPosition> positions;
+};
+
+class KafkaUpdateConsumer {
+ public:
+  StatusOr<std::vector<KafkaUpsertMessage>> PollBatch(PollOptions options);
+  Status Commit(const KafkaCheckpoint& checkpoint);
+  Status Seek(const KafkaCheckpoint& checkpoint);
+  StatusOr<KafkaProgress> GetProgress() const;
+};
+```
+
+`UpdateCoordinator` 负责循环 `PollBatch`，把 message 交给 `UpdateApplier` 写入目标 generation set，并且只在 batch 内所有 message 都本地发布成功后 commit 对应 Kafka offset。失败时 fail closed，不推进 offset。测试中可以用 fake Kafka client 或 recorded `KafkaUpsertMessage` batch 验证 coordinator 与 consumer 的交互，不需要引入非 Kafka 数据源接口。
 
 ## 在线全量更新
 
@@ -275,7 +337,7 @@ Rebuild Catch-up
   -> shard 切换到 RebuildGeneration 后，作为该 shard 的 authoritative visible stream
 ```
 
-这两条流实现成两个独立 Kafka consumer。rebuild 期间，两个 consumer 都保持全局运行。Live Apply 持续写 ActiveGeneration 的所有 shard，直到整个 rebuild 完成。Rebuild Catch-up 从 watermark `W` 开始持续写 RebuildGeneration 的所有 shard，直到所有 shard 完成切换。某个 shard 切换后，Rebuild Catch-up 成为该 shard 的 active generation consumer；Live Apply 写入旧 ActiveGeneration shard 的数据不再 serving-visible。
+这两条流实现成两个独立 `KafkaUpdateConsumer`。rebuild 期间，两个 consumer 都保持全局运行。Live Apply 持续写 ActiveGeneration 的所有 shard，直到整个 rebuild 完成。Rebuild Catch-up 从 watermark `W` 开始持续写 RebuildGeneration 的所有 shard，直到所有 shard 完成切换。某个 shard 切换后，Rebuild Catch-up 成为该 shard 的 active generation update stream；Live Apply 写入旧 ActiveGeneration shard 的数据不再 serving-visible。
 
 如果新 full artifact 携带新的 schema version，Live Apply 仍按旧 active generation schema 编码；Rebuild Catch-up 按新 rebuild generation schema 编码。这样同一条 Kafka upsert 在双写窗口内可以进入两个不同 layout 的 row store，但每个 generation 内部仍只用自己的 compiled layout 解释 row。
 
@@ -283,10 +345,10 @@ Rebuild Catch-up
 
 ```text
 1. 从 sharded artifact 加载 shard_i 的 new_full。
-2. 确认 RebuildGeneration shard_i 的所有 Kafka partitions lag 都低于配置阈值，并且已追过 Live Apply 为 shard_i 发布过的安全 source position。
+2. 确认 RebuildGeneration shard_i 相关的所有 Kafka partitions lag 都低于配置阈值，并且已追过 Live Apply 为 shard_i 发布过的安全 source position。
 3. 把 new_full_i 绑定到 RebuildGeneration shard_i。
 4. 原子替换 active_shards[i] 为 RebuildGeneration shard_i。
-5. 两个 Kafka consumer 继续保持全局运行。
+5. 两个 `KafkaUpdateConsumer` 继续保持全局运行。
 6. 等 reader drain 后释放旧 shard。
 ```
 
@@ -383,7 +445,7 @@ delta compaction 也使用双写、切读、下线旧 generation 的流程：
 ```text
 1. 记录 active realtime append-only buffer 的当前 offset 作为 compact boundary。
 2. 创建 CompactGeneration，包含 fresh empty RealtimeDeltaAtomicTable。
-3. 从 boundary 之后开始，Kafka upsert 同时写入 ActiveGeneration 和 CompactGeneration。
+3. 从 boundary 之后开始，upsert 同时写入 ActiveGeneration 和 CompactGeneration。
 4. 从 active realtime append-only buffer 的 boundary 向前扫描到开头；同一个 key 只保留第一个遇到的最新 RowRef。
 5. 继续扫描旧 CompactDeltaSnapshot；只补充尚未被 realtime scan 覆盖的 key。
 6. SnapshotBuilder 构建 owned ImmutableRowSnapshot，作为新的 CompactDeltaSnapshot。
@@ -751,13 +813,15 @@ encoding policy 按字段配置。离线 builder 也可以基于 Parquet 统计�
 - `Get` 从 compact delta snapshot 能通过同一套 `ImmutableRowSnapshotView` 返回完整 row。
 - `MGet` 对跨 shard keys 返回与输入 key 顺序一致的结果。
 - realtime delta 本地发布后立刻可见。
+- `UpdateCoordinator` 只有在 batch 内所有 Kafka upsert 本地发布成功后才 commit offset。
+- `KafkaUpdateConsumer` 可以通过 fake Kafka client 或 recorded message batch 测试 poll、seek、lag 和 commit 行为。
 - delta hit 返回整条 row，永远不和 full 做部分字段合并。
 - compact delta 覆盖 full snapshot。
 - realtime delta 覆盖 compact delta。
 - 单 shard cutover 不影响其他 shard。
 - 尚未 cutover 的 shard 仍服务 old full 加 live realtime updates。
 - cutover 前积累的 RebuildGeneration realtime delta 在 shard 切换后可见。
-- 外部 rebuild cutover 只有在相关 Kafka partitions lag 都低于阈值后才允许执行。
+- 外部 rebuild cutover 只有在相关 Kafka partitions lag 都低于阈值并追过安全 source position 后才允许执行。
 - 外部 `AsyncLoad` 能按 shard 切换 full artifact、schema version 和 rebuild realtime delta。
 - 外部 `AsyncLoad` 双写期间，旧 generation 忽略新增字段/删除字段变化，新 generation 按新 schema 编码。
 - 内部 `Full Rebase` 能把 compact delta 合并进 full snapshot，并保留 rebase realtime delta 的最高优先级。
