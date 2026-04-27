@@ -73,6 +73,17 @@ class Row {
 
 索引按 primary key 分 shard。每个 shard 可以独立加载、压实和切换。
 
+第一版默认 shard count 为 `128`。在读多写少、全量数据约 100 GiB、约 100M rows 的工况下，平均每个 shard 约 781K rows、约 800 MiB full data。这个粒度避免 shard metadata、artifact section、状态指标和 cutover 调度过碎，同时仍可按 shard 控制 mmap load、cutover 和 compaction 内存峰值。
+
+shard assignment 使用稳定、版本化的 64-bit hash，不使用可能随进程或 Abseil 版本变化的 `absl::Hash`：
+
+```text
+hash = StableHash64(primary_key, hash_seed, hash_version)
+shard_id = hash & (shard_count - 1)
+```
+
+第一版要求 `shard_count` 为 2 的幂。`hash_seed` 和 `hash_version` 写入 artifact metadata，保证离线构建、在线 serving 和 rebuild catch-up 使用同一分片函数。
+
 ```text
 ForwardIndex
   -> ShardDirectory
@@ -80,7 +91,7 @@ ForwardIndex
 
 ShardState published container
   -> FullSnapshotView
-       -> ImmutableRowSnapshotView mmap-backed
+       -> ImmutableRowSnapshotView mmap-backed or rebase-owned
   -> CompactDeltaSnapshot
        -> ImmutableRowSnapshotView owned heap-backed
   -> RealtimeDeltaAtomicTable mutable, read-optimized
@@ -103,7 +114,7 @@ Get(primary_key)
 
 每条 Kafka upsert 都是完整 row。命中 delta 后即可返回完整 value，所以读路径永远不需要把 base 和 delta 的字段做合并。
 
-`FullSnapshotView` 和 `CompactDeltaSnapshot` 都是薄 wrapper，读侧都委托给 `ImmutableRowSnapshotView`。两者使用相同的 primary-key lookup、row decode、string/list pool 解析和 schema/layout 校验逻辑；差异只在 backing memory 和附加 metadata。
+`FullSnapshotView` 和 `CompactDeltaSnapshot` 都是薄 wrapper，读侧都委托给 `ImmutableRowSnapshotView`。两者使用相同的 primary-key lookup、row decode、string/list pool 解析和 schema/layout 校验逻辑；差异只在 backing memory 和附加 metadata。外部 `AsyncLoad` 发布的 full snapshot 使用 mmap-backed artifact；内部 `Full Rebase` 生成的 full snapshot 可以使用 owned backing。
 
 ## 运行期 Schema
 
@@ -124,6 +135,48 @@ schema 演进规则：
 - row 只能用它所属 schema version 的 compiled layout 解释。
 
 客户端应在热路径外把字段名解析成 `FieldId` 和 `FieldAccessor<T>`。accessor 携带 schema-version 校验；当它被用于不兼容的 shard state 时 fail fast。
+
+支持的 scalar 类型：
+
+```text
+int8
+int32
+int64
+uint64
+bool
+string
+```
+
+第一版支持的 list 类型：
+
+```text
+list<int8>
+list<int32>
+list<int64>
+list<uint64>
+list<bool>
+list<string>
+```
+
+`presence_bitmap` 区分 missing/null 与 present。list 字段 present 且 `element_count = 0` 表示空 list；字段 not present 表示 missing/null/default。
+
+`FieldAccessor<T>` 携带：
+
+```text
+schema_version
+layout_fingerprint
+field_id
+physical_type
+is_list
+nullable/default policy
+field_offset/ref_offset
+```
+
+`Row::Get(accessor)` 必须先比较 `schema_version` 和 `layout_fingerprint`。不兼容时不能尝试按 offset 读取，也不能 fallback 到 field name 查找。第一版策略：
+
+- debug/test build 使用 `CHECK`/assert fail fast。
+- release build 返回 accessor mismatch error，并增加 `field_accessor_mismatch_total` 指标。
+- 如果 public API 保持 `std::optional<T>`，则内部必须记录 last error 或提供可观测 status，避免把 accessor mismatch 静默伪装成字段缺失。
 
 ## 实时增量更新
 
@@ -163,7 +216,14 @@ realtime table 避免读路径应用层锁。slot 创建使用 CAS 更新 slot k
 
 ## 在线全量更新
 
-全量更新按 shard 执行，避免同时持有两份完整全量数据。
+`FullSnapshotView` 有两个更新触发路径：
+
+- 外部 `AsyncLoad`：离线系统构建好新的 sharded full artifact 后，外部调用 `ForwardIndex::LoadAsync`。该路径可以切换 artifact、schema version 和 compiled layout。
+- 内部 `Full Rebase`：当某个 shard 的 `CompactDeltaSnapshot` 体积过大时，组件内部把该 compact snapshot 合并进该 shard 的 `FullSnapshotView`。该路径不依赖外部 artifact，不改变 schema/layout，只降低 serving 层级中的 compact 压力。
+
+两条路径都按 shard 执行，避免同时持有两份完整全量数据。
+
+### 外部 AsyncLoad
 
 ```text
 ActiveGeneration
@@ -222,6 +282,54 @@ old_full + old_realtime_delta
 
 shard 切换后，该 shard 的查询读取 RebuildGeneration。Live Apply 继续全局消费并写入 ActiveGeneration，直到整个 rebuild 完成，但这些写入对已切换 shard 不再 serving-visible。Rebuild Catch-up 是已切换 shard 的 serving-visible stream，并且必须按照配置的 lag threshold 保持追平。
 
+rebuild generation delta 限制：
+
+- warning：global rebuild delta bytes >= active full dataset 的 5%，默认约 5 GiB。
+- hard limit：global rebuild delta bytes >= active full dataset 的 10%，默认约 10 GiB，abort rebuild。
+- per-shard hard limit：rebuild delta bytes >= full shard bytes 的 20%，默认约 160 MiB；单 shard 超限时 abort rebuild 或优先处理该 shard。
+
+shard cutover batch 默认：
+
+- 默认每次 cutover `1` 个 shard。
+- 允许配置为最多 `2` 个 shard，但要求当前加载的新 full shard batch 总 bytes <= 2 GiB。
+- 如果机器可用内存低于配置水位，batch size 自动降为 `1`。
+
+### 内部 Full Rebase
+
+内部 `Full Rebase` 用于控制 compact delta 长期增长。它只处理单个 shard，并把该 shard 当前 sealed 的 `CompactDeltaSnapshot` 合并进 `FullSnapshotView`：
+
+```text
+before: full_snapshot + compact_delta + realtime_delta
+after:  rebased_full_snapshot + empty compact_delta + realtime_delta
+```
+
+rebase 流程：
+
+```text
+1. pin 当前 serving ShardState。
+2. 冻结当前 CompactDeltaSnapshot 作为 rebase input。
+3. 从 full_snapshot 顺序读取 rows，对 compact_delta 覆盖的 key 使用 compact row。
+4. 把合并后的完整 shard 写成新的 owned/mmap-capable full snapshot backing。
+5. 创建 empty CompactDeltaSnapshot。
+6. 复用当前 active RealtimeDeltaAtomicTable 作为最高优先级覆盖层。
+7. 原子替换 active_shards[i] 为 rebased ShardState。
+8. 等 reader drain 后释放旧 full 和旧 compact。
+```
+
+`Full Rebase` 不消费外部 full watermark，也不切换 schema version。rebase 期间新 Kafka upsert 继续写 active realtime delta；发布后读路径仍保持：
+
+```text
+realtime_delta -> compact_delta -> full_snapshot
+```
+
+内部触发阈值按 shard 计算，满足任一条件即触发：
+
+- compact snapshot bytes >= full shard bytes 的 20%。
+- compact snapshot bytes >= 256 MiB。
+- compact snapshot unique keys >= shard row count 的 20%。
+
+默认 128 shards 下，单 shard full 约 800 MiB；通常会在 compact snapshot 约 160 MiB 或 unique keys 约 156K 时触发 `Full Rebase`。同一 shard 同一时刻只允许一个 rebase；外部 `AsyncLoad` 与内部 `Full Rebase` 冲突时，外部 `AsyncLoad` 优先，内部 rebase 取消或延后。
+
 ## Kafka 顺序要求
 
 Kafka topic 必须按 `primary_key` 作为 key，保证同一个 key 的更新在一个 partition 内有序。每条消息同时携带可比较的 source position。
@@ -249,7 +357,7 @@ RealtimeDeltaAtomicTable
   -> atomically publish new ShardState
 ```
 
-`CompactDeltaSnapshot` 按 primary key 存储自 full snapshot 以来发生变更记录的完整更新后 row slot。它与 `FullSnapshotView` 使用同一个 `ImmutableRowSnapshotView` 读接口；`FullSnapshotView` 的 backing 来自 mmap artifact，`CompactDeltaSnapshot` 的 backing 来自 compaction 生成的 owned heap snapshot。
+`CompactDeltaSnapshot` 按 primary key 存储自 full snapshot 以来发生变更记录的完整更新后 row slot。它与 `FullSnapshotView` 使用同一个 `ImmutableRowSnapshotView` 读接口；`FullSnapshotView` 的 backing 可以来自 mmap artifact 或内部 rebase 生成的 owned snapshot，`CompactDeltaSnapshot` 的 backing 来自 compaction 生成的 owned heap snapshot。
 
 读路径层数保持固定：
 
@@ -257,15 +365,25 @@ RealtimeDeltaAtomicTable
 realtime_delta -> compact_delta -> full_snapshot
 ```
 
-如果某个 shard 的 compact delta 超过配置阈值，组件报警并在下一次 full rebuild 中优先处理该 shard。
+如果某个 shard 的 compact delta 超过配置阈值，组件触发内部 `Full Rebase`，把 compact delta 合并进该 shard 的 `FullSnapshotView`。
+
+默认 realtime delta compaction 触发条件按 shard 计算，满足任一条件即触发：
+
+- `RealtimeAtomicHashMap` load factor >= 0.60。
+- realtime delta unique keys >= shard row count 的 5%。
+- realtime delta row arena bytes >= 64 MiB。
+- realtime delta append-only payload pools bytes >= 64 MiB。
+
+对默认 128 shards，这大约对应每 shard 约 39K unique updated keys，通常远小于 full shard 大小，可以保持 realtime probe 短、compaction 成本可控。`CompactDeltaSnapshot` 继续增长到更高阈值后，由内部 `Full Rebase` 合并进 `FullSnapshotView`。
 
 ## 并发模型
 
 - 查询线程读取一个不可变 shard state 及其读优化 realtime delta。
 - realtime delta 使用 CAS slot creation 和 atomic row pointer publication 保证即时可见。
-- full rebuild 每次只加载和切换一个 shard。
+- 外部 full rebuild 和内部 full rebase 每次默认只加载和切换一个 shard。
 - 只要还有查询持有 shared reference，旧 shard state 就会继续存活。
-- 同一时刻应该只允许一个 active full rebuild generation。
+- 同一时刻应该只允许一个 active external full rebuild generation。
+- 同一 shard 同一时刻只允许一个 internal full rebase；它不能与该 shard 的 external cutover 并发。
 - per-shard cutover 和 rebuild catch-up 必须由一个 update coordinator 协调。
 
 ## 内存模型
@@ -352,6 +470,13 @@ checksum
 
 full snapshot 应尽量 mmap-friendly。row arena、string pools、list pools 和 frozen primary-key index 应尽可能直接从 artifact 读取。这样全量更新不需要两份完整数据同时 heap 常驻。
 
+第一版 full artifact 强制 mmap：
+
+- 外部 full artifact 必须通过 read-only mmap 加载，不提供 full dataset heap load 模式。
+- mmap 使用 private/read-only mapping；row arena、string pools、list pools 和 frozen primary-key index 均从 artifact section 直接读取。
+- loader 必须校验 header、format version、section directory、schema compatibility 和 checksum；失败时 fail closed，当前 serving shard 不变。
+- 内部 `Full Rebase` 和 compact delta snapshot 可以使用 owned heap backing，但 seal 后必须暴露与 mmap full snapshot 相同的 `ImmutableRowSnapshotView`。
+
 ## 主键索引
 
 full snapshot 和 compact delta snapshot 在 serving 读路径中都使用 frozen primary-key index view：
@@ -361,6 +486,32 @@ FrozenPrimaryKeyIndexView: primary_key -> row_offset
 ```
 
 full snapshot 的 index 从 mmap artifact 读取；compact delta snapshot 的 index 由 compaction 生成并由 heap backing 持有。两者对读路径暴露相同的 lookup API。`absl::flat_hash_map<uint64_t, RowOffset>` 仍适合后台构建阶段的临时索引，但 serving-visible 的 compact snapshot 应在 seal 后转换成 `FrozenPrimaryKeyIndexView`，以复用 full snapshot 的读路径。serving-visible 的 realtime delta 使用下面定义的 `RealtimeAtomicHashMap`。
+
+`FrozenPrimaryKeyIndexView` 在 mmap-backed full snapshot 和 owned-backed compact snapshot 中使用相同二进制布局：
+
+```text
+FrozenPrimaryKeyIndex
+  -> Header
+       magic
+       format_version
+       row_count
+       capacity
+       hash_seed
+       hash_version
+       group_width
+       control_offset
+       key_offset
+       row_offset_offset
+  -> control_bytes[capacity + group_width]
+  -> keys[capacity] uint64_t
+  -> row_offsets[capacity] uint64_t
+```
+
+- index 使用 SwissTable-style frozen open addressing。
+- `capacity` 按 `row_count / 0.875` 向上取整到 2 的幂。
+- `control_bytes` 存 H2 metadata 和 empty sentinel；没有 tombstone，因为 snapshot immutable。
+- `keys` 存 primary key，`row_offsets` 存 `RowArenaView` 内的 byte offset。
+- mmap-backed 直接指向 artifact section；owned-backed 持有同样布局的一段 heap bytes。读路径只依赖 view，不关心 backing 类型。
 
 ## ImmutableRowSnapshotView
 
@@ -401,7 +552,7 @@ OwnedSnapshotBacking
   -> compact generation metadata
 ```
 
-`FullSnapshotView` 是 `ImmutableRowSnapshotView + artifact metadata/source watermark` 的薄 wrapper。`CompactDeltaSnapshot` 是 `ImmutableRowSnapshotView + compact generation metadata/build stats` 的薄 wrapper。这样 full 和 compact 的二进制 encoding 可以保持一致，lookup、row decode、schema evolution 和 dictionary/list 解析测试也可以共用同一套用例。
+`FullSnapshotView` 是 `ImmutableRowSnapshotView + artifact/rebase metadata/source watermark` 的薄 wrapper。外部 `AsyncLoad` 的 full snapshot 使用 `MmapSnapshotBacking`；内部 `Full Rebase` 的 full snapshot 可以使用 `OwnedSnapshotBacking`。`CompactDeltaSnapshot` 是 `ImmutableRowSnapshotView + compact generation metadata/build stats` 的薄 wrapper。这样 full 和 compact 的二进制 encoding 可以保持一致，lookup、row decode、schema evolution 和 dictionary/list 解析测试也可以共用同一套用例。
 
 `SnapshotBuilder` 可以在构建阶段使用 `absl::flat_hash_map`、vector sort 或其他临时结构收集 key 到 row offset 的映射；一旦 seal 成 `OwnedSnapshotBacking`，serving 读路径只看到 frozen index view。
 
@@ -494,7 +645,22 @@ FixedSizeRowSlot
 row_address = row_base + row_id * row_slot_size
 ```
 
+第一版 artifact 和 owned compact snapshot 统一使用 little-endian。第一版只支持 little-endian host；loader 在非 little-endian host 上 fail closed。每个 row slot 起始地址 8-byte aligned，`row_slot_size` 向上取整到 8 字节。
+
 scalar 字段存储在 `fixed_area` 中。string 和 list 不作为变长 payload 直接内联在 row 内，而是在 `ref_area` 中存固定宽度引用，再通过外部 pool 和 arena 解析。
+
+- `presence_bitmap` 按 field ID 在 compiled layout 中的位置编号，1 bit 表示字段 present。bitmap 字节数向上取整后再 pad 到 8-byte boundary。
+- `fixed_area` 中 scalar 字段按物理类型自然对齐，最大 8-byte alignment。`int8` 和 `bool` 占 1 byte；`int32` 占 4 bytes；`int64` 和 `uint64` 占 8 bytes。除 presence bitmap 外不做 bit-packing。
+- `ref_area` 中 `string` 和 `list<T>` 使用 16-byte fixed-width ref，不把变长 payload 内联进 row slot。
+
+```text
+ValueRef16
+  -> uint64_t offset
+  -> uint32_t byte_length
+  -> uint32_t element_count_or_flags
+```
+
+`string` 的 `byte_length` 表示字节数，第一版按 UTF-8 bytes 存储但不在索引层做 Unicode 规范化。`list<T>` 的 payload 连续存储，`byte_length` 表示 payload 字节数，`element_count_or_flags` 表示元素个数。field 的 pool/encoding 由 compiled layout 决定，不放在每个 ref 中重复存储。
 
 string 和 list 字段使用字段级 encoding policy：
 
@@ -520,13 +686,16 @@ encoding policy 按字段配置。离线 builder 也可以基于 Parquet 统计�
 - 单 shard cutover 不影响其他 shard。
 - 尚未 cutover 的 shard 仍服务 old full 加 live realtime updates。
 - cutover 前积累的 RebuildGeneration realtime delta 在 shard 切换后可见。
+- 外部 `AsyncLoad` 能按 shard 切换 full artifact、schema version 和 rebuild realtime delta。
+- 内部 `Full Rebase` 能把 compact delta 合并进 full snapshot，并保留 active realtime delta 的最高优先级。
+- 外部 `AsyncLoad` 与内部 `Full Rebase` 冲突时，外部 `AsyncLoad` 优先且内部 rebase 被取消或延后。
 - 同一个 generation 内，较旧的 source position 不能覆盖较新的 source position。
 - 业务删除 row 会作为带 delete marker 字段的普通 row 返回。
 - schema 新增字段时，旧 snapshot 返回默认值，新 snapshot 返回实际值。
 - schema 删除字段时，field ID tombstone 且永不复用。
 - 已有 field ID 的类型变更会被拒绝。
 - dictionary string/list 字段能正确解码。
-- mmap-backed full snapshot 和 owned compact snapshot 的 row decode 行为一致。
+- mmap-backed full snapshot、rebase-owned full snapshot 和 owned compact snapshot 的 row decode 行为一致。
 - artifact checksum 和 format validation fail closed。
 - delta compaction 后 lookup 结果保持不变。
 
@@ -540,13 +709,4 @@ encoding policy 按字段配置。离线 builder 也可以基于 Parquet 统计�
 - mmap full shards、dictionary pools、realtime deltas 下的内存使用。
 - per-shard load 和 cutover 时间。
 - delta compaction CPU 成本。
-
-## 待决问题
-
-- `FixedSizeRowSlot` 的精确二进制编码、对齐方式和字节序。
-- 第一版支持的 scalar 类型和 list element 类型集合。
-- shard count 和 shard assignment function。
-- `FrozenPrimaryKeyIndexView` 的 mmap-backed 与 owned-backed 二进制布局。
-- realtime delta compaction、rebuild delta limit、shard cutover batch size 的默认阈值。
-- field accessor 在不兼容 schema version 下 fail fast。
-- 第一版 full artifact 强制使用 mmap。
+- 内部 `Full Rebase` 的单 shard 构建时间、峰值内存和发布延迟。
