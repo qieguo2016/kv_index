@@ -80,7 +80,9 @@ ForwardIndex
 
 ShardState published container
   -> FullSnapshotView
+       -> ImmutableRowSnapshotView mmap-backed
   -> CompactDeltaSnapshot
+       -> ImmutableRowSnapshotView owned heap-backed
   -> RealtimeDeltaAtomicTable mutable, read-optimized
   -> schema/layout handles
 ```
@@ -100,6 +102,8 @@ Get(primary_key)
 ```
 
 每条 Kafka upsert 都是完整 row。命中 delta 后即可返回完整 value，所以读路径永远不需要把 base 和 delta 的字段做合并。
+
+`FullSnapshotView` 和 `CompactDeltaSnapshot` 都是薄 wrapper，读侧都委托给 `ImmutableRowSnapshotView`。两者使用相同的 primary-key lookup、row decode、string/list pool 解析和 schema/layout 校验逻辑；差异只在 backing memory 和附加 metadata。
 
 ## 运行期 Schema
 
@@ -135,16 +139,19 @@ serving 路径使用读优化的 mutable delta table：
 
 ```text
 RealtimeDeltaAtomicTable
-  -> fixed-capacity open-addressing hash table
+  -> fixed-capacity RealtimeAtomicHashMap
   -> slot: atomic key state + primary_key + atomic RowRef*
   -> append-only row arena
+  -> append-only string/list payload pools
 ```
 
 upsert 发布流程：
 
 ```text
 1. 解码并校验 Kafka row。
-2. 把完整 row 编码进 append-only row arena。
+2. 把完整 row 编码为一个不可变 RowRef：fixed row slot 写入 row arena，
+   string/list payload 写入该 realtime generation 的 append-only payload pools，
+   row slot 内只保存固定宽度引用。
 3. 在该 shard 的 realtime table 中查找 primary-key slot；slot 不存在时，通过 CAS 创建。
 4. release-store 新 RowRef* 到该 slot。
 5. 本地发布成功后再 commit Kafka offset。
@@ -152,7 +159,7 @@ upsert 发布流程：
 
 第 4 步完成后，后续读请求即可看到新 row。旧 row memory 不在写入路径上立即回收；被替换的 row 会保留在 append-only arena 中，直到 realtime table generation 完成 compaction，并且 reader epoch 证明没有查询还可能引用旧 row 后再释放。
 
-realtime table 避免读路径应用层锁。slot 创建使用 CAS 更新 slot key state；读路径 common path 是 open-addressing probe 加 atomic pointer load。
+realtime table 避免读路径应用层锁。slot 创建使用 CAS 更新 slot key state；读路径 common path 是 open-addressing probe 加 atomic pointer load。hash table 的具体设计见 `RealtimeAtomicHashMap`。
 
 ## 在线全量更新
 
@@ -236,12 +243,13 @@ realtime delta 会随 live 更新增长。每个 shard 应独立 compact：
 ```text
 RealtimeDeltaAtomicTable
   -> scan latest RowRef per key
-  -> build CompactDeltaSnapshot keyed by primary_key
+  -> SnapshotBuilder 构建 owned ImmutableRowSnapshot
+  -> 作为 CompactDeltaSnapshot 发布
   -> create a fresh empty RealtimeDeltaAtomicTable
   -> atomically publish new ShardState
 ```
 
-`CompactDeltaSnapshot` 按 primary key 存储自 full snapshot 以来发生变更记录的完整更新后 row slot。`FullSnapshotView` 保持只读。
+`CompactDeltaSnapshot` 按 primary key 存储自 full snapshot 以来发生变更记录的完整更新后 row slot。它与 `FullSnapshotView` 使用同一个 `ImmutableRowSnapshotView` 读接口；`FullSnapshotView` 的 backing 来自 mmap artifact，`CompactDeltaSnapshot` 的 backing 来自 compaction 生成的 owned heap snapshot。
 
 读路径层数保持固定：
 
@@ -346,13 +354,128 @@ full snapshot 应尽量 mmap-friendly。row arena、string pools、list pools �
 
 ## 主键索引
 
-full snapshot 的 artifact 存储 mmap-friendly 的 frozen hash table：
+full snapshot 和 compact delta snapshot 在 serving 读路径中都使用 frozen primary-key index view：
 
 ```text
-FrozenPrimaryKeyIndex: primary_key -> row_offset
+FrozenPrimaryKeyIndexView: primary_key -> row_offset
 ```
 
-`absl::flat_hash_map<uint64_t, RowOffset>` 仍适合 compact delta 和 realtime delta snapshot，因为它们的 heap 开销只由近期更新决定，而不是全量数据集。
+full snapshot 的 index 从 mmap artifact 读取；compact delta snapshot 的 index 由 compaction 生成并由 heap backing 持有。两者对读路径暴露相同的 lookup API。`absl::flat_hash_map<uint64_t, RowOffset>` 仍适合后台构建阶段的临时索引，但 serving-visible 的 compact snapshot 应在 seal 后转换成 `FrozenPrimaryKeyIndexView`，以复用 full snapshot 的读路径。serving-visible 的 realtime delta 使用下面定义的 `RealtimeAtomicHashMap`。
+
+## ImmutableRowSnapshotView
+
+`ImmutableRowSnapshotView` 是 full snapshot 和 compact delta snapshot 的共享读侧结构：
+
+```text
+ImmutableRowSnapshotView
+  -> FrozenPrimaryKeyIndexView
+  -> RowArenaView
+  -> StringPoolView
+  -> ListPoolView
+  -> RuntimeSchema
+  -> CompiledRowLayout
+  -> SnapshotBackingRef
+```
+
+它只提供 immutable lookup 和 row decode，不负责构建、压实或内存释放：
+
+```text
+Get(primary_key)
+  -> FrozenPrimaryKeyIndexView.Lookup(primary_key)
+  -> RowArenaView.RowAt(row_offset)
+  -> construct Row with schema/layout and backing pin
+```
+
+`SnapshotBackingRef` 负责保证 row arena、string pools、list pools 和 index memory 在 `Row` 生命周期内有效。实现上提供两种 backing：
+
+```text
+MmapSnapshotBacking
+  -> artifact fd / mapping
+  -> section directory
+  -> checksums and artifact metadata
+
+OwnedSnapshotBacking
+  -> owned frozen index bytes
+  -> owned row arena
+  -> owned string/list payload pools
+  -> compact generation metadata
+```
+
+`FullSnapshotView` 是 `ImmutableRowSnapshotView + artifact metadata/source watermark` 的薄 wrapper。`CompactDeltaSnapshot` 是 `ImmutableRowSnapshotView + compact generation metadata/build stats` 的薄 wrapper。这样 full 和 compact 的二进制 encoding 可以保持一致，lookup、row decode、schema evolution 和 dictionary/list 解析测试也可以共用同一套用例。
+
+`SnapshotBuilder` 可以在构建阶段使用 `absl::flat_hash_map`、vector sort 或其他临时结构收集 key 到 row offset 的映射；一旦 seal 成 `OwnedSnapshotBacking`，serving 读路径只看到 frozen index view。
+
+## RealtimeAtomicHashMap
+
+`RealtimeAtomicHashMap` 是 `RealtimeDeltaAtomicTable` 的主键索引。它面向 read-heavy、write-light 的在线增量层，目标不是替代通用 hash map，而是在固定容量、无 erase、generation 级回收的约束下，提供无应用层读锁的稳定查询路径。
+
+实现应基于 Abseil SwissTable / `absl::flat_hash_map` 的成熟设计：
+
+- 优先复用 Abseil 暴露的 public API、hash policy、hash mixing 和等价性比较语义。
+- 对 control byte 分组探测、H1/H2 hash 拆分、probe sequence、load factor 阈值等机制，优先引用 Abseil 可稳定复用的实现。
+- 如果所需能力只存在于 Abseil internal API，不能直接依赖不稳定 internal 符号作为长期 ABI；应 vendor/fork 必要代码或按 SwissTable 思路改写，并保留来源和 license 说明。
+- 不使用 `absl::flat_hash_map` 对象本身承载 serving realtime delta，因为它不暴露 slot CAS，占用/初始化状态，也不能在无外部锁下并发读写。
+
+推荐数据布局：
+
+```text
+RealtimeAtomicHashMap
+  -> capacity: fixed, power-of-two preferred
+  -> atomic control bytes: SwissTable-style group metadata
+  -> slots[]
+
+Slot
+  -> atomic<uint8_t> state: empty / reserved / occupied
+  -> uint64_t primary_key
+  -> atomic<RowRef*> latest_row
+```
+
+`control bytes` 用于快速跳过不匹配 group，减少 probe 次数；`state` 用于并发创建 slot 时保护 key 和 row pointer 的发布顺序。control bytes 必须用原子读写或等价的无 data race 机制实现，不能直接复用 `absl::flat_hash_map` 内部的非原子 control byte 存储。slot 在一个 realtime generation 内不 erase。删除业务 row 仍然通过普通 upsert 的 delete marker 表达。
+
+`SourcePosition` 存在 `RowRef` 中。更新已有 key 时，writer 通过 `latest_row.compare_exchange` 发布新 `RowRef*`，并用当前 `RowRef` 的 source position 判断是否允许覆盖，避免较旧 replay 把较新 row 指针覆盖掉。
+
+读路径：
+
+```text
+1. 根据 primary_key 计算 hash，生成 H1/H2。
+2. 按 SwissTable probe sequence 扫描 control bytes。
+3. 对 H2 匹配的 slot 读取 state。
+4. state 为 occupied 时比较 primary_key。
+5. key 相等后 acquire-load latest_row 并返回 RowRef。
+6. 遇到 empty group 且 probe 终止时返回 miss。
+```
+
+读路径不持有 shard 级读锁，也不访问正在初始化的 slot。若观察到 `reserved`，说明 writer 正在创建 slot；读线程可以跳过该 slot 并继续 probe，或短暂重试当前 group，但不能读取 key 或 row pointer。
+
+写路径：
+
+```text
+1. 在 hash map 外完成 row decode、schema 校验、row arena 写入和 payload pool 写入。
+2. 根据 primary_key probe 目标 slot。
+3. 命中 occupied 且 key 相同的 slot 时，读取当前 latest_row。
+4. 比较新旧 RowRef 的 source position；新版本更大时，用 compare_exchange 发布 latest_row。
+5. 遇到 empty slot 时 CAS state: empty -> reserved。
+6. CAS 成功的 writer 先把 control byte 从 empty 写成当前 key 的 H2，使后续 reader 不会把该 probe chain 当作 miss 终止。
+7. 初始化 primary_key 和 latest_row。
+8. 最后 release-store state: reserved -> occupied。
+9. CAS 失败的 writer 重新 probe 或重读该 slot。
+```
+
+写入必须先生成不可变 `RowRef`，再发布到 map。这样读线程一旦 acquire-load 到 `RowRef*`，即可读取完整 row version。若同一个 key 有并发或乱序 replay，写路径必须根据 `SourcePosition` 拒绝旧版本覆盖新版本。
+
+容量策略：
+
+- hash map 固定容量，不在 serving 热路径 rehash。
+- 每个 shard 按预估增量 key 数 reserve，默认 load factor 不应超过 50%-70%。
+- 接近容量阈值时触发 delta compaction，构建新的 `CompactDeltaSnapshot` 和空的 `RealtimeAtomicHashMap`，再发布新的 `ShardState`。
+- 容量耗尽时 fail closed：拒绝继续发布该 shard 的新增 delta，报警并触发 compaction/rebuild；不能在读写热路径执行阻塞式扩容。
+
+内存与生命周期：
+
+- `RowRef` 指向 append-only row arena 和 append-only string/list payload pools。
+- 被替换的旧 row 不在写路径释放。
+- 旧 realtime generation 在 compaction 或 shard cutover 后，等待 reader epoch drain 再整体释放。
+- control bytes 和 slots 应按 cache line 对齐，避免热点 slot 的 `latest_row` 与频繁写入的元数据产生 false sharing。
 
 ## Row Layout 与 Value Encoding
 
@@ -388,6 +511,7 @@ encoding policy 按字段配置。离线 builder 也可以基于 Parquet 统计�
 核心测试：
 
 - `Get` 从 full shard snapshot 能返回完整 row。
+- `Get` 从 compact delta snapshot 能通过同一套 `ImmutableRowSnapshotView` 返回完整 row。
 - `MGet` 对跨 shard keys 返回与输入 key 顺序一致的结果。
 - realtime delta 本地发布后立刻可见。
 - delta hit 返回整条 row，永远不和 full 做部分字段合并。
@@ -402,6 +526,7 @@ encoding policy 按字段配置。离线 builder 也可以基于 Parquet 统计�
 - schema 删除字段时，field ID tombstone 且永不复用。
 - 已有 field ID 的类型变更会被拒绝。
 - dictionary string/list 字段能正确解码。
+- mmap-backed full snapshot 和 owned compact snapshot 的 row decode 行为一致。
 - artifact checksum 和 format validation fail closed。
 - delta compaction 后 lookup 结果保持不变。
 
@@ -410,6 +535,7 @@ encoding policy 按字段配置。离线 builder 也可以基于 Parquet 统计�
 - 并发 reader 下单 key `Get` 延迟。
 - 混合 shard 和同 shard key set 下的批量 `MGet` 延迟。
 - 常见 schema 的 full-row decode 延迟。
+- `ImmutableRowSnapshotView` 在 mmap-backed 和 owned-backed 下的 lookup/decode 延迟。
 - realtime delta `Get` 延迟和 update publication 成本。
 - mmap full shards、dictionary pools、realtime deltas 下的内存使用。
 - per-shard load 和 cutover 时间。
@@ -420,7 +546,7 @@ encoding policy 按字段配置。离线 builder 也可以基于 Parquet 统计�
 - `FixedSizeRowSlot` 的精确二进制编码、对齐方式和字节序。
 - 第一版支持的 scalar 类型和 list element 类型集合。
 - shard count 和 shard assignment function。
-- full shard primary-key index 使用 mmap-friendly frozen hash table。
+- `FrozenPrimaryKeyIndexView` 的 mmap-backed 与 owned-backed 二进制布局。
 - realtime delta compaction、rebuild delta limit、shard cutover batch size 的默认阈值。
 - field accessor 在不兼容 schema version 下 fail fast。
 - 第一版 full artifact 强制使用 mmap。
