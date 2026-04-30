@@ -12,7 +12,9 @@
 
 #include "kv_index/row.h"
 #include "kv_index/schema.h"
+#include "kv_index/types.h"
 #include "src/core/frozen_primary_key_index.h"
+#include "src/core/realtime_delta.h"
 #include "src/core/row_storage.h"
 #include "src/core/snapshot_builder.h"
 #include "tests/test_support/test_macros.h"
@@ -26,6 +28,7 @@ using kv_index::FieldSpec;
 using kv_index::FieldType;
 using kv_index::Row;
 using kv_index::RuntimeSchema;
+using kv_index::SourcePosition;
 using kv_index::StatusCode;
 using kv_index::core::BuildFrozenPrimaryKeyIndex;
 using kv_index::core::CompactDeltaSnapshot;
@@ -33,6 +36,7 @@ using kv_index::core::FrozenPrimaryKeyIndexEntry;
 using kv_index::core::FullSnapshotView;
 using kv_index::core::OwnedSnapshotBacking;
 using kv_index::core::OwnedSnapshotRowPayload;
+using kv_index::core::RealtimeDeltaAtomicTable;
 using kv_index::core::ShardState;
 using kv_index::core::SnapshotBuilder;
 namespace storage = kv_index::internal;
@@ -113,6 +117,23 @@ std::shared_ptr<const OwnedSnapshotBacking> BuildCorruptSnapshotForKey(
       std::move(payloads));
 }
 
+std::shared_ptr<RealtimeDeltaAtomicTable> BuildRealtime(
+    std::shared_ptr<const CompiledRowLayout> layout,
+    const std::vector<std::pair<std::uint64_t, storage::EncodedRow>>& rows) {
+  auto realtime = std::make_shared<RealtimeDeltaAtomicTable>(
+      RealtimeDeltaAtomicTable::Options{.layout = layout, .capacity = 16});
+  std::int64_t offset = 1;
+  for (const auto& [primary_key, encoded] : rows) {
+    KV_INDEX_CHECK(realtime
+                       ->Publish(primary_key,
+                                 SourcePosition{.partition = 0,
+                                                .offset = offset++},
+                                 encoded)
+                       .ok());
+  }
+  return realtime;
+}
+
 void EmptyStateMissesAndExposesIdentity() {
   ShardState state(7, 42);
 
@@ -139,6 +160,49 @@ void FullSnapshotServesRowsAfterRealtimeAndCompactMiss() {
   KV_INDEX_CHECK_EQ(result->value().Get<std::int32_t>(1).value(), 7);
   KV_INDEX_CHECK_EQ(result->value().Get<std::string>(2).value(),
                     std::string("full"));
+}
+
+void RealtimeDeltaOverridesCompactAndFullAsWholeRow() {
+  auto layout = MakeLayout();
+  ShardState state(
+      2, 11,
+      ShardState::Layers{
+          .realtime_delta = BuildRealtime(
+              layout, {{100, MakeRow(*layout, 11, std::string("realtime"))}}),
+          .compact_delta = CompactDeltaSnapshot(BuildSnapshot(
+              layout, {{100, MakeRow(*layout, 9, std::nullopt)}})),
+          .full_snapshot = FullSnapshotView(BuildSnapshot(
+              layout, {{100, MakeRow(*layout, 7, std::string("full"))}})),
+      });
+
+  auto result = state.Get(100);
+  KV_INDEX_CHECK(result.ok());
+  KV_INDEX_CHECK(result->has_value());
+  KV_INDEX_CHECK_EQ(result->value().Get<std::int32_t>(1).value(), 11);
+  KV_INDEX_CHECK_EQ(result->value().Get<std::string>(2).value(),
+                    std::string("realtime"));
+}
+
+void ReservedRealtimeMissFallsThroughToCompactSnapshot() {
+  auto layout = MakeLayout();
+  auto realtime = std::make_shared<RealtimeDeltaAtomicTable>(
+      RealtimeDeltaAtomicTable::Options{.layout = layout, .capacity = 16});
+  KV_INDEX_CHECK(realtime->ReserveSlotForTesting(100).ok());
+  ShardState state(
+      2, 12,
+      ShardState::Layers{
+          .realtime_delta = realtime,
+          .compact_delta = CompactDeltaSnapshot(BuildSnapshot(
+              layout, {{100, MakeRow(*layout, 9, std::nullopt)}})),
+          .full_snapshot = FullSnapshotView(BuildSnapshot(
+              layout, {{100, MakeRow(*layout, 7, std::string("full"))}})),
+      });
+
+  auto result = state.Get(100);
+  KV_INDEX_CHECK(result.ok());
+  KV_INDEX_CHECK(result->has_value());
+  KV_INDEX_CHECK_EQ(result->value().Get<std::int32_t>(1).value(), 9);
+  KV_INDEX_CHECK(!result->value().Get<std::string>(2).has_value());
 }
 
 void CompactSnapshotOverridesFullSnapshotAsWholeRow() {
@@ -175,11 +239,31 @@ void CompactErrorsFailClosedWithoutFullFallback() {
   KV_INDEX_CHECK_EQ(result.status().code(), StatusCode::kInvalidArgument);
 }
 
+void RealtimeErrorsFailClosedWithoutFullFallback() {
+  auto layout = MakeLayout();
+  auto bad_realtime = std::make_shared<RealtimeDeltaAtomicTable>(
+      RealtimeDeltaAtomicTable::Options{.layout = nullptr, .capacity = 16});
+  ShardState state(
+      3, 13,
+      ShardState::Layers{
+          .realtime_delta = bad_realtime,
+          .full_snapshot = FullSnapshotView(BuildSnapshot(
+              layout, {{100, MakeRow(*layout, 7, std::string("full"))}})),
+      });
+
+  auto result = state.Get(100);
+  KV_INDEX_CHECK(!result.ok());
+  KV_INDEX_CHECK_EQ(result.status().code(), StatusCode::kFailedPrecondition);
+}
+
 void MGetPreservesShardLocalOrderAndDuplicatePositions() {
   auto layout = MakeLayout();
+  auto realtime = BuildRealtime(
+      layout, {{20, MakeRow(*layout, 20, std::string("realtime-twenty"))}});
   ShardState state(
-      4, 13,
+      4, 14,
       ShardState::Layers{
+          .realtime_delta = realtime,
           .full_snapshot = FullSnapshotView(BuildSnapshot(
               layout, {{10, MakeRow(*layout, 1, std::string("ten"))},
                        {20, MakeRow(*layout, 2, std::string("twenty"))}})),
@@ -189,9 +273,9 @@ void MGetPreservesShardLocalOrderAndDuplicatePositions() {
   auto result = state.MGet(keys);
   KV_INDEX_CHECK(result.ok());
   KV_INDEX_CHECK_EQ(result->size(), keys.size());
-  KV_INDEX_CHECK_EQ((*result)[0]->Get<std::int32_t>(1).value(), 2);
+  KV_INDEX_CHECK_EQ((*result)[0]->Get<std::int32_t>(1).value(), 20);
   KV_INDEX_CHECK_EQ((*result)[1]->Get<std::int32_t>(1).value(), 1);
-  KV_INDEX_CHECK_EQ((*result)[2]->Get<std::int32_t>(1).value(), 2);
+  KV_INDEX_CHECK_EQ((*result)[2]->Get<std::int32_t>(1).value(), 20);
   KV_INDEX_CHECK(!(*result)[3].has_value());
 }
 
@@ -200,8 +284,11 @@ void MGetPreservesShardLocalOrderAndDuplicatePositions() {
 int main() {
   EmptyStateMissesAndExposesIdentity();
   FullSnapshotServesRowsAfterRealtimeAndCompactMiss();
+  RealtimeDeltaOverridesCompactAndFullAsWholeRow();
+  ReservedRealtimeMissFallsThroughToCompactSnapshot();
   CompactSnapshotOverridesFullSnapshotAsWholeRow();
   CompactErrorsFailClosedWithoutFullFallback();
+  RealtimeErrorsFailClosedWithoutFullFallback();
   MGetPreservesShardLocalOrderAndDuplicatePositions();
   return 0;
 }

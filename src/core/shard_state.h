@@ -2,11 +2,13 @@
 #define KV_INDEX_SRC_CORE_SHARD_STATE_H_
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
 #include "kv_index/row.h"
 #include "kv_index/status.h"
+#include "src/core/realtime_delta.h"
 #include "src/core/snapshot.h"
 
 namespace kv_index::core {
@@ -14,6 +16,7 @@ namespace kv_index::core {
 class ShardState {
  public:
   struct Layers {
+    std::shared_ptr<const RealtimeDeltaAtomicTable> realtime_delta;
     std::optional<CompactDeltaSnapshot> compact_delta;
     std::optional<FullSnapshotView> full_snapshot;
   };
@@ -31,6 +34,7 @@ class ShardState {
  private:
   std::uint32_t shard_id_ = 0;
   std::uint64_t generation_ = 0;
+  std::shared_ptr<const RealtimeDeltaAtomicTable> realtime_delta_;
   std::optional<CompactDeltaSnapshot> compact_delta_;
   std::optional<FullSnapshotView> full_snapshot_;
 };

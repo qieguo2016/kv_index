@@ -10,13 +10,22 @@ ShardState::ShardState(std::uint32_t shard_id, std::uint64_t generation,
                        Layers layers)
     : shard_id_(shard_id),
       generation_(generation),
+      realtime_delta_(std::move(layers.realtime_delta)),
       compact_delta_(std::move(layers.compact_delta)),
       full_snapshot_(std::move(layers.full_snapshot)) {}
 
 StatusOr<std::optional<Row>> ShardState::Get(
     std::uint64_t primary_key) const {
-  // W03 realtime is an intentionally empty placeholder, so lookup begins at
-  // compact and only falls through on clean misses.
+  if (realtime_delta_ != nullptr) {
+    auto realtime_row = realtime_delta_->Get(primary_key);
+    if (!realtime_row.ok()) {
+      return realtime_row.status();
+    }
+    if (realtime_row->has_value()) {
+      return std::move(realtime_row).value();
+    }
+  }
+
   if (compact_delta_.has_value()) {
     auto compact_row = compact_delta_->Get(primary_key);
     if (!compact_row.ok()) {

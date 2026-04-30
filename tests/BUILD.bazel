@@ -75,6 +75,28 @@ cc_test(
 )
 
 cc_test(
+    name = "realtime_atomic_hash_map_test",
+    srcs = ["unit/realtime_atomic_hash_map_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
+    name = "realtime_delta_test",
+    srcs = ["unit/realtime_delta_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
     name = "shard_state_test",
     srcs = ["unit/shard_state_test.cc"],
     size = "small",
@@ -92,6 +114,16 @@ cc_test(
     deps = [
         ":test_support",
         "//:kv_index_internal",
+    ],
+)
+
+cc_test(
+    name = "source_position_test",
+    srcs = ["unit/source_position_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index",
     ],
 )
 
@@ -134,10 +166,13 @@ test_suite(
         ":byte_io_test",
         ":forward_index_unit_test",
         ":frozen_primary_key_index_test",
+        ":realtime_atomic_hash_map_test",
+        ":realtime_delta_test",
         ":row_decoder_test",
         ":schema_test",
         ":shard_directory_test",
         ":shard_state_test",
+        ":source_position_test",
         ":snapshot_test",
         ":status_unit_test",
     ],
@@ -159,10 +194,13 @@ test_suite(
         ":byte_io_test",
         ":forward_index_unit_test",
         ":frozen_primary_key_index_test",
+        ":realtime_atomic_hash_map_test",
+        ":realtime_delta_test",
         ":schema_test",
         ":row_decoder_test",
         ":shard_directory_test",
         ":shard_state_test",
+        ":source_position_test",
         ":snapshot_test",
         ":status_unit_test",
         ":forward_index_integration_test",
