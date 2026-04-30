@@ -16,6 +16,17 @@ cc_test(
     size = "small",
     deps = [
         ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
+    name = "status_unit_test",
+    srcs = ["unit/status_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
         "//:kv_index",
     ],
 )
@@ -44,7 +55,10 @@ cc_test(
 
 test_suite(
     name = "unit_tests",
-    tests = [":forward_index_unit_test"],
+    tests = [
+        ":forward_index_unit_test",
+        ":status_unit_test",
+    ],
 )
 
 test_suite(
@@ -61,6 +75,7 @@ test_suite(
     name = "all_tests",
     tests = [
         ":forward_index_unit_test",
+        ":status_unit_test",
         ":forward_index_integration_test",
         ":kv_index_smoke_test",
     ],

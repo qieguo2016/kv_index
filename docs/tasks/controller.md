@@ -3,7 +3,7 @@
 ## Metadata
 - Current Date: 2026-04-30
 - Last Restored: 2026-04-30
-- Active Task: W00 Foundation And Build Layout
+- Active Task: none
 - Execution Mode: strict serial multi-agent
 - Branch: main
 
@@ -20,7 +20,7 @@
 ## Task Overview
 | Task | Status | Depends On | Retry Count | Task Document |
 | --- | --- | --- | --- | --- |
-| W00 | planning | none | 0 | docs/tasks/W00-foundation-and-build-layout.md |
+| W00 | completed | none | 0 | docs/tasks/W00-foundation-and-build-layout.md |
 | W01 | pending | W00 | 0 | docs/tasks/W01-schema-row-materialization.md |
 | W02 | pending | W01 | 0 | docs/tasks/W02-immutable-snapshot.md |
 | W03 | pending | W02 | 0 | docs/tasks/W03-serving-read-path.md |
@@ -31,14 +31,17 @@
 | W08 | pending | W07 | 0 | docs/tasks/W08-observability-finalization.md |
 
 ## Completed Tasks
-- None.
+- W00 Foundation And Build Layout
 
 ## Blocked By Human
 - None.
 
 ## Dispatch Log
 - 2026-04-30: Initialized controller ledger from `docs/agent_prompt.md` and implementation plan. Selected W00 as the only active task because it has no dependencies.
+- 2026-04-30: W00 plan agent completed planning and updated the task document to `ready_for_impl`. Controller reviewed required planning content and moved W00 to implementation.
+- 2026-04-30: W00 coding agent completed implementation, updated the task document, and reported focused tests passing. Controller moved W00 to independent verification.
+- 2026-04-30: W00 verify agent returned `pass` after independent focused tests and implementation review. Controller marked W00 completed and authorized the W00 commit.
 
 ## Next Dispatch Decision
-- Dispatch W00 plan agent.
-- Required W00 plan output: implementation boundary, dependency assumptions, risks, concrete acceptance criteria, and prioritized focused tests written to `docs/tasks/W00-foundation-and-build-layout.md`.
+- Dispatch W00 commit-only coding agent.
+- After the W00 commit succeeds, select W01 as the next active task because W00 will be complete and W01 depends only on W00.

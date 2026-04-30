@@ -1,5 +1,6 @@
 #include "kv_index/forward_index.h"
 #include "kv_index/version.h"
+#include "src/core/hash.h"
 #include "test_support/test_macros.h"
 
 #include <cstdint>
@@ -49,6 +50,19 @@ void StableShardAssignmentIsBoundedAndRepeatable() {
     KV_INDEX_CHECK_LT(first.ShardFor(key), options.shard_count);
     KV_INDEX_CHECK_EQ(first.ShardFor(key), second.ShardFor(key));
   }
+
+  KV_INDEX_CHECK_EQ(first.ShardFor(42), 4U);
+}
+
+void StableHashGoldenValuesRemainStable() {
+  KV_INDEX_CHECK_EQ(kv_index::StableHash64(0, 0, 1),
+                    12085254679833835651ULL);
+  KV_INDEX_CHECK_EQ(kv_index::StableHash64(1, 0, 1),
+                    10858953248184931039ULL);
+  KV_INDEX_CHECK_EQ(kv_index::StableHash64(42, 17, 1),
+                    13083006257041843452ULL);
+  KV_INDEX_CHECK_EQ(kv_index::core::StableHash64(42, 17, 1),
+                    kv_index::StableHash64(42, 17, 1));
 }
 
 void EmptyIndexMissesPreserveMGetOrderAndShape() {
@@ -69,6 +83,7 @@ int main() {
   DefaultOptionsMatchDesign();
   RejectsInvalidShardCounts();
   StableShardAssignmentIsBoundedAndRepeatable();
+  StableHashGoldenValuesRemainStable();
   EmptyIndexMissesPreserveMGetOrderAndShape();
   return 0;
 }

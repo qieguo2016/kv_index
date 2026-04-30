@@ -3,17 +3,47 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
-    name = "kv_index",
-    srcs = [
-        "src/core/forward_index.cc",
-        "src/version.cc",
-    ],
+    name = "kv_index_public_headers",
     hdrs = [
         "include/kv_index/forward_index.h",
         "include/kv_index/kv_index.h",
         "include/kv_index/row.h",
+        "include/kv_index/status.h",
         "include/kv_index/types.h",
         "include/kv_index/version.h",
     ],
     includes = ["include"],
+)
+
+cc_library(
+    name = "kv_index_internal",
+    srcs = [
+        "src/core/forward_index.cc",
+        "src/core/hash.cc",
+    ],
+    hdrs = ["src/core/hash.h"],
+    deps = [":kv_index_public_headers"],
+    visibility = [
+        "//:__pkg__",
+        "//tests:__pkg__",
+    ],
+)
+
+cc_library(
+    name = "kv_index_version",
+    srcs = ["src/version.cc"],
+    deps = [":kv_index_public_headers"],
+    visibility = [
+        "//:__pkg__",
+        "//tests:__pkg__",
+    ],
+)
+
+cc_library(
+    name = "kv_index",
+    deps = [":kv_index_public_headers"],
+    implementation_deps = [
+        ":kv_index_internal",
+        ":kv_index_version",
+    ],
 )
