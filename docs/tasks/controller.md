@@ -3,7 +3,7 @@
 ## Metadata
 - Current Date: 2026-04-30
 - Last Restored: 2026-04-30
-- Active Task: W08 commit pending
+- Active Task: none; all planned work completed
 - Execution Mode: strict serial multi-agent
 - Branch: main
 
@@ -94,9 +94,58 @@
 - 2026-04-30: Dispatched W08 fix retry 1 coding agent to repair only the two fail-closed evidence gaps and optionally strengthen the existing partial cutover assertion without broadening behavior.
 - 2026-04-30: W08 fix retry 1 coding agent returned `DONE` after adding true mmap row-slot validation failure evidence, cancellation-with-old-serving-generation evidence, stronger partial-cutover value assertions, W08 task logs, and passing requested Bazel gates plus `git diff --check`. Controller moved W08 back to independent verification.
 - 2026-04-30: W08 verify retry 1 returned `pass` after confirming the prior fail-closed evidence blockers are resolved and focused/aggregate gates plus `bazel build //...` passed. Controller marked W08 completed and authorized the W08 atomic commit.
+- 2026-04-30: W08 commit completed as `a7438f8`. All planned tasks W00-W08 are completed; controller moved to final full-project verification.
+
+## Final Verification Log
+- 2026-04-30 final verify agent: confirmed `docs/agent_prompt.md` requires
+  strict serial W00-W08 execution followed by final full-project verification;
+  `docs/tasks/controller.md` shows W00-W08 all `completed`, active task is
+  `final full-project verification`, and W08 commit is recorded as `a7438f8`.
+  `docs/tasks/W08-observability-finalization.md` shows W08 `completed`, retry
+  count 1, verify retry 1 final conclusion `pass`, and next step points final
+  verification back to this controller ledger.
+- 2026-04-30 final verify command: `git status --short` passed/read. Output:
+  `M docs/tasks/W08-observability-finalization.md` and
+  `M docs/tasks/controller.md`. The W08 task-doc edit was pre-existing for this
+  final verify pass and was not modified by the final verify agent; this pass
+  edits only this controller ledger section.
+- 2026-04-30 final verify command: `git log --oneline -n 10` passed. Top
+  commits: `a7438f8 finalization: add runtime status and coverage`,
+  `b3ff052 maintenance: add compaction and full rebase`,
+  `f76fb14 async-load: add artifact loading pipeline`,
+  `1935434 kafka: add update pipeline`,
+  `2e4521f realtime: add delta table read layer`,
+  `265e59f serving: wire reads through shard state`,
+  `b2f248d snapshot: add immutable row snapshots`,
+  `7d6216d schema: add row materialization contract`,
+  `dc85d5e build: add foundation targets and status primitive`, and
+  `45f48e5 docs: add multi-agent task ledger`.
+- 2026-04-30 final verify command: `git diff --check` passed before final
+  ledger update.
+- 2026-04-30 final verify command: `bazel test //tests:unit_tests` passed,
+  22/22 tests. Bazel reported `Executed 0 out of 22 tests: 22 tests pass`
+  because all test actions were cached.
+- 2026-04-30 final verify command: `bazel test //tests:smoke_tests` passed,
+  1/1 test. Bazel reported `Executed 0 out of 1 test: 1 test passes` because
+  the test action was cached.
+- 2026-04-30 final verify command: `bazel test //tests:integration_tests`
+  passed, 5/5 tests. Bazel reported `Executed 0 out of 5 tests: 5 tests pass`
+  because all test actions were cached.
+- 2026-04-30 final verify command: `bazel test //tests:all_tests` passed,
+  28/28 tests. Bazel reported `Executed 0 out of 28 tests: 28 tests pass`
+  because all test actions were cached.
+- 2026-04-30 final verify command: `bazel build //...` passed, 37 targets.
+- 2026-04-30 final verify risk/notes: no business-code edits were made by the
+  final verify agent, no commit/push/worktree was created, and no failed
+  commands were observed. Remaining documented product risks are the accepted
+  W08 limitations: aggregate accessor mismatch counting remains unwired,
+  async-load late publish failure follows the documented sequential
+  partial-cutover rule, mmap enumeration may be inefficient, and live Kafka
+  broker behavior remains outside automated tests.
+- 2026-04-30 controller: final verification passed. The remaining uncommitted
+  changes are ledger-only updates recording W08 commit `a7438f8` and final
+  verification results.
 
 ## Next Dispatch Decision
-- Dispatch W08 commit-only coding agent.
-- Required W08 commit output: stage the W08 implementation, W08 tests,
-  benchmark targets, README update, and task/controller ledger updates; create
-  one atomic commit with exactly one Codex trailer; do not push.
+- None. All planned tasks and final verification are complete after the
+  ledger-only final state commit.

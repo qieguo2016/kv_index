@@ -447,5 +447,5 @@ Acceptance criteria:
 - Live Kafka broker behavior remains outside automated tests; keep broker-free fake seams as the acceptance boundary.
 
 ## Next Step
-- Completed. Create the W08 atomic commit, then run final full-project
-  verification from the controller workflow.
+- Completed in commit `a7438f8`; final full-project verification is tracked in
+  `docs/tasks/controller.md`.
