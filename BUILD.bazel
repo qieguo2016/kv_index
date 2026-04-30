@@ -19,15 +19,21 @@ cc_library(
 cc_library(
     name = "kv_index_internal",
     srcs = [
+        "src/core/frozen_primary_key_index.cc",
         "src/core/forward_index.cc",
         "src/core/hash.cc",
         "src/core/row_storage.cc",
         "src/core/schema.cc",
+        "src/core/snapshot.cc",
+        "src/core/snapshot_builder.cc",
     ],
     hdrs = [
         "src/core/byte_io.h",
+        "src/core/frozen_primary_key_index.h",
         "src/core/hash.h",
         "src/core/row_storage.h",
+        "src/core/snapshot.h",
+        "src/core/snapshot_builder.h",
     ],
     deps = [":kv_index_public_headers"],
     visibility = [

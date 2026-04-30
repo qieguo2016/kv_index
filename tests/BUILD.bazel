@@ -32,8 +32,29 @@ cc_test(
 )
 
 cc_test(
+    name = "frozen_primary_key_index_test",
+    srcs = ["unit/frozen_primary_key_index_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+    ],
+)
+
+cc_test(
     name = "schema_test",
     srcs = ["unit/schema_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
+    name = "snapshot_test",
+    srcs = ["unit/snapshot_test.cc"],
     size = "small",
     deps = [
         ":test_support",
@@ -90,8 +111,10 @@ test_suite(
     tests = [
         ":byte_io_test",
         ":forward_index_unit_test",
+        ":frozen_primary_key_index_test",
         ":row_decoder_test",
         ":schema_test",
+        ":snapshot_test",
         ":status_unit_test",
     ],
 )
@@ -111,8 +134,10 @@ test_suite(
     tests = [
         ":byte_io_test",
         ":forward_index_unit_test",
+        ":frozen_primary_key_index_test",
         ":schema_test",
         ":row_decoder_test",
+        ":snapshot_test",
         ":status_unit_test",
         ":forward_index_integration_test",
         ":kv_index_smoke_test",

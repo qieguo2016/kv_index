@@ -1,0 +1,95 @@
+#ifndef KV_INDEX_SRC_CORE_SNAPSHOT_H_
+#define KV_INDEX_SRC_CORE_SNAPSHOT_H_
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "kv_index/row.h"
+#include "kv_index/schema.h"
+#include "kv_index/status.h"
+#include "src/core/frozen_primary_key_index.h"
+#include "src/core/row_storage.h"
+
+namespace kv_index::core {
+
+struct OwnedSnapshotRowPayload {
+  std::vector<std::byte> arena;
+  std::vector<std::string> string_dictionary;
+  std::vector<std::vector<std::byte>> scalar_list_dictionary;
+  std::vector<std::vector<std::string>> string_list_dictionary;
+  std::vector<std::string> string_element_dictionary;
+};
+
+class OwnedSnapshotBacking {
+ public:
+  OwnedSnapshotBacking(std::shared_ptr<const CompiledRowLayout> layout,
+                       std::vector<std::byte> frozen_index_bytes,
+                       std::vector<std::byte> row_slot_bytes,
+                       std::vector<OwnedSnapshotRowPayload> row_payloads);
+
+  const std::shared_ptr<const CompiledRowLayout>& layout() const noexcept {
+    return layout_;
+  }
+  const std::vector<std::byte>& frozen_index_bytes() const noexcept {
+    return frozen_index_bytes_;
+  }
+  const std::vector<std::byte>& row_slot_bytes() const noexcept {
+    return row_slot_bytes_;
+  }
+  const std::vector<OwnedSnapshotRowPayload>& row_payloads() const noexcept {
+    return row_payloads_;
+  }
+  std::uint64_t row_count() const noexcept {
+    return static_cast<std::uint64_t>(row_payloads_.size());
+  }
+
+  StatusOr<internal::EncodedRow> EncodedRowAt(
+      std::uint64_t row_offset) const;
+
+ private:
+  std::shared_ptr<const CompiledRowLayout> layout_;
+  std::vector<std::byte> frozen_index_bytes_;
+  std::vector<std::byte> row_slot_bytes_;
+  std::vector<OwnedSnapshotRowPayload> row_payloads_;
+};
+
+class ImmutableRowSnapshotView {
+ public:
+  explicit ImmutableRowSnapshotView(
+      std::shared_ptr<const OwnedSnapshotBacking> backing);
+
+  StatusOr<std::optional<Row>> Get(std::uint64_t primary_key) const;
+
+ private:
+  std::shared_ptr<const OwnedSnapshotBacking> backing_;
+  StatusOr<FrozenPrimaryKeyIndexView> index_;
+};
+
+class FullSnapshotView {
+ public:
+  explicit FullSnapshotView(std::shared_ptr<const OwnedSnapshotBacking> backing);
+
+  StatusOr<std::optional<Row>> Get(std::uint64_t primary_key) const;
+
+ private:
+  ImmutableRowSnapshotView view_;
+};
+
+class CompactDeltaSnapshot {
+ public:
+  explicit CompactDeltaSnapshot(
+      std::shared_ptr<const OwnedSnapshotBacking> backing);
+
+  StatusOr<std::optional<Row>> Get(std::uint64_t primary_key) const;
+
+ private:
+  ImmutableRowSnapshotView view_;
+};
+
+}  // namespace kv_index::core
+
+#endif  // KV_INDEX_SRC_CORE_SNAPSHOT_H_
