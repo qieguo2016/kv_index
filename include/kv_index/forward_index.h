@@ -2,6 +2,7 @@
 #define KV_INDEX_FORWARD_INDEX_H_
 
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -12,6 +13,11 @@
 #include "kv_index/types.h"
 
 namespace kv_index {
+
+namespace core {
+class ForwardIndexTestPeer;
+class ShardDirectory;
+}  // namespace core
 
 struct ForwardIndexOptions {
   std::uint32_t shard_count = 128;
@@ -28,6 +34,7 @@ std::uint64_t StableHash64(std::uint64_t primary_key, std::uint64_t seed,
 class ForwardIndex {
  public:
   explicit ForwardIndex(const ForwardIndexOptions& options);
+  ~ForwardIndex();
 
   const ForwardIndexOptions& options() const noexcept { return options_; }
   std::uint32_t ShardCount() const noexcept { return options_.shard_count; }
@@ -42,7 +49,10 @@ class ForwardIndex {
   bool CancelLoad(LoadId id);
 
  private:
+  friend class core::ForwardIndexTestPeer;
+
   ForwardIndexOptions options_;
+  std::unique_ptr<core::ShardDirectory> shard_directory_;
 
   mutable std::mutex load_mu_;
   LoadId next_load_id_ = 1;

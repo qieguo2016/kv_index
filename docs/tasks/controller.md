@@ -23,7 +23,7 @@
 | W00 | completed | none | 0 | docs/tasks/W00-foundation-and-build-layout.md |
 | W01 | completed | W00 | 1 | docs/tasks/W01-schema-row-materialization.md |
 | W02 | completed | W01 | 0 | docs/tasks/W02-immutable-snapshot.md |
-| W03 | pending | W02 | 0 | docs/tasks/W03-serving-read-path.md |
+| W03 | completed | W02 | 0 | docs/tasks/W03-serving-read-path.md |
 | W04 | pending | W03 | 0 | docs/tasks/W04-realtime-delta.md |
 | W05 | pending | W04 | 0 | docs/tasks/W05-kafka-update-pipeline.md |
 | W06 | pending | W05 | 0 | docs/tasks/W06-artifact-async-load.md |
@@ -34,6 +34,7 @@
 - W00 Foundation And Build Layout
 - W01 Schema, Layout, Row Semantics, And Row Materialization Contract
 - W02 Immutable Snapshot Module
+- W03 Serving Read Path
 
 ## Blocked By Human
 - None.
@@ -53,7 +54,11 @@
 - 2026-04-30: W02 plan agent completed planning and updated the task document to `ready_for_impl`. Controller reviewed required planning content and moved W02 to implementation.
 - 2026-04-30: W02 coding agent completed implementation with TDD red/green notes and focused tests passing. Controller moved W02 to independent verification.
 - 2026-04-30: W02 verify agent returned `pass` after focused tests, `unit_tests`, `all_tests`, and uncached `all_tests`. Controller marked W02 completed and authorized the W02 commit.
+- 2026-04-30: W02 commit completed as `b2f248d`. Selected W03 as the next active task because its only dependency is W02.
+- 2026-04-30: W03 plan agent completed planning and identified required Bazel wiring scope. Controller authorized `BUILD.bazel` and `tests/BUILD.bazel` edits for W03 wiring only, then moved W03 to implementation.
+- 2026-04-30: W03 coding agent completed implementation with focused tests passing and reported a concern: local Apple libc++ did not compile `std::atomic<std::shared_ptr<const ShardState>>`, so `ShardDirectory` uses standard atomic shared_ptr free functions. Controller moved W03 to independent verification with this as an explicit review point.
+- 2026-04-30: W03 verify agent returned `pass` after focused tests, `unit_tests`, `all_tests`, and uncached `all_tests`. Controller accepted the standard atomic shared_ptr free-function approach for this toolchain and authorized the W03 commit.
 
 ## Next Dispatch Decision
-- Dispatch W02 commit-only coding agent.
-- After the W02 commit succeeds, select W03 as the next active task because W02 will be complete and W03 depends only on W02.
+- Dispatch W03 commit-only coding agent.
+- After the W03 commit succeeds, select W04 as the next active task because W03 will be complete and W04 depends only on W03.

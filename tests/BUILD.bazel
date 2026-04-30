@@ -75,6 +75,27 @@ cc_test(
 )
 
 cc_test(
+    name = "shard_state_test",
+    srcs = ["unit/shard_state_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
+    name = "shard_directory_test",
+    srcs = ["unit/shard_directory_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+    ],
+)
+
+cc_test(
     name = "status_unit_test",
     srcs = ["unit/status_test.cc"],
     size = "small",
@@ -102,6 +123,7 @@ cc_test(
     tags = ["integration"],
     deps = [
         ":test_support",
+        "//:kv_index_internal",
         "//:kv_index",
     ],
 )
@@ -114,6 +136,8 @@ test_suite(
         ":frozen_primary_key_index_test",
         ":row_decoder_test",
         ":schema_test",
+        ":shard_directory_test",
+        ":shard_state_test",
         ":snapshot_test",
         ":status_unit_test",
     ],
@@ -137,6 +161,8 @@ test_suite(
         ":frozen_primary_key_index_test",
         ":schema_test",
         ":row_decoder_test",
+        ":shard_directory_test",
+        ":shard_state_test",
         ":snapshot_test",
         ":status_unit_test",
         ":forward_index_integration_test",
