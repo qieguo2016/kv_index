@@ -17,15 +17,40 @@
 - [English design document](docs/superpowers/specs/2026-04-26-in-memory-forward-index-design.md)
 - [实现计划](docs/superpowers/plans/2026-04-27-in-memory-forward-index-implementation.md)
 
+## 构建和测试命令
+
+```bash
+bazel build //...              # build all targets
+bazel test //tests:all_tests   # run all tests
+bazel test //tests:unit_tests
+bazel test //tests:smoke_tests
+bazel test //tests:integration_tests
+```
+
 ## 目录结构
 
 ```text
 .
 ├── AGENTS.md
+├── BUILD.bazel       # root Bazel package and kv_index library target
+├── MODULE.bazel      # Bazel module definition
+├── README.md
 ├── docs/
+│   ├── tasks/        # task notes and execution records
 │   └── superpowers/
 │       ├── plans/   # implementation plans
 │       └── specs/   # design specifications
+├── include/
+│   └── kv_index/     # public C++ headers
+├── src/
+│   ├── core/         # core forward-index implementation
+│   └── version.cc
+├── tests/
+│   ├── BUILD.bazel
+│   ├── integration/  # integration tests
+│   ├── smoke/        # smoke tests
+│   ├── test_support/ # shared test helpers
+│   └── unit/         # unit tests
 ├── .worktrees/      # local/untracked worktree scratch space
 └── bazel-*          # Bazel-generated symlinks, not source files
 ```
