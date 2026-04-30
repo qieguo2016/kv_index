@@ -12,13 +12,11 @@ namespace kv_index::core {
 namespace {
 
 StatusOr<FrozenPrimaryKeyIndexView> ValidateBackingIndex(
-    const std::shared_ptr<const OwnedSnapshotBacking>& backing) {
+    const std::shared_ptr<const SnapshotBacking>& backing) {
   if (backing == nullptr) {
     return Status::FailedPrecondition("snapshot view has no backing");
   }
-  return FrozenPrimaryKeyIndexView::Validate(
-      std::span<const std::byte>(backing->frozen_index_bytes().data(),
-                                 backing->frozen_index_bytes().size()));
+  return FrozenPrimaryKeyIndexView::Validate(backing->frozen_index_bytes());
 }
 
 }  // namespace
@@ -75,7 +73,7 @@ StatusOr<internal::EncodedRow> OwnedSnapshotBacking::EncodedRowAt(
 }
 
 ImmutableRowSnapshotView::ImmutableRowSnapshotView(
-    std::shared_ptr<const OwnedSnapshotBacking> backing)
+    std::shared_ptr<const SnapshotBacking> backing)
     : backing_(std::move(backing)), index_(ValidateBackingIndex(backing_)) {}
 
 StatusOr<std::optional<Row>> ImmutableRowSnapshotView::Get(
@@ -106,6 +104,10 @@ StatusOr<std::optional<Row>> ImmutableRowSnapshotView::Get(
 
 FullSnapshotView::FullSnapshotView(
     std::shared_ptr<const OwnedSnapshotBacking> backing)
+    : view_(std::move(backing)) {}
+
+FullSnapshotView::FullSnapshotView(
+    std::shared_ptr<const SnapshotBacking> backing)
     : view_(std::move(backing)) {}
 
 StatusOr<std::optional<Row>> FullSnapshotView::Get(

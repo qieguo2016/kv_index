@@ -24,18 +24,35 @@ struct OwnedSnapshotRowPayload {
   std::vector<std::string> string_element_dictionary;
 };
 
-class OwnedSnapshotBacking {
+class SnapshotBacking {
+ public:
+  virtual ~SnapshotBacking() = default;
+
+  virtual const std::shared_ptr<const CompiledRowLayout>& layout()
+      const noexcept = 0;
+  virtual std::span<const std::byte> frozen_index_bytes() const noexcept = 0;
+  virtual std::uint64_t row_count() const noexcept = 0;
+  virtual StatusOr<internal::EncodedRow> EncodedRowAt(
+      std::uint64_t row_offset) const = 0;
+};
+
+class OwnedSnapshotBacking final : public SnapshotBacking {
  public:
   OwnedSnapshotBacking(std::shared_ptr<const CompiledRowLayout> layout,
                        std::vector<std::byte> frozen_index_bytes,
                        std::vector<std::byte> row_slot_bytes,
                        std::vector<OwnedSnapshotRowPayload> row_payloads);
 
-  const std::shared_ptr<const CompiledRowLayout>& layout() const noexcept {
+  const std::shared_ptr<const CompiledRowLayout>& layout()
+      const noexcept override {
     return layout_;
   }
-  const std::vector<std::byte>& frozen_index_bytes() const noexcept {
+  const std::vector<std::byte>& owned_frozen_index_bytes() const noexcept {
     return frozen_index_bytes_;
+  }
+  std::span<const std::byte> frozen_index_bytes() const noexcept override {
+    return std::span<const std::byte>(frozen_index_bytes_.data(),
+                                      frozen_index_bytes_.size());
   }
   const std::vector<std::byte>& row_slot_bytes() const noexcept {
     return row_slot_bytes_;
@@ -43,12 +60,12 @@ class OwnedSnapshotBacking {
   const std::vector<OwnedSnapshotRowPayload>& row_payloads() const noexcept {
     return row_payloads_;
   }
-  std::uint64_t row_count() const noexcept {
+  std::uint64_t row_count() const noexcept override {
     return static_cast<std::uint64_t>(row_payloads_.size());
   }
 
   StatusOr<internal::EncodedRow> EncodedRowAt(
-      std::uint64_t row_offset) const;
+      std::uint64_t row_offset) const override;
 
  private:
   std::shared_ptr<const CompiledRowLayout> layout_;
@@ -60,18 +77,19 @@ class OwnedSnapshotBacking {
 class ImmutableRowSnapshotView {
  public:
   explicit ImmutableRowSnapshotView(
-      std::shared_ptr<const OwnedSnapshotBacking> backing);
+      std::shared_ptr<const SnapshotBacking> backing);
 
   StatusOr<std::optional<Row>> Get(std::uint64_t primary_key) const;
 
  private:
-  std::shared_ptr<const OwnedSnapshotBacking> backing_;
+  std::shared_ptr<const SnapshotBacking> backing_;
   StatusOr<FrozenPrimaryKeyIndexView> index_;
 };
 
 class FullSnapshotView {
  public:
   explicit FullSnapshotView(std::shared_ptr<const OwnedSnapshotBacking> backing);
+  explicit FullSnapshotView(std::shared_ptr<const SnapshotBacking> backing);
 
   StatusOr<std::optional<Row>> Get(std::uint64_t primary_key) const;
 

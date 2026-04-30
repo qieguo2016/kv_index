@@ -1,9 +1,15 @@
 #include "kv_index/forward_index.h"
 
+#include "src/core/async_load.h"
 #include "src/core/hash.h"
 #include "src/core/shard_directory.h"
 
+#include <sys/stat.h>
+
+#include <atomic>
+#include <memory>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -14,6 +20,33 @@ namespace {
   std::string message = status.message().empty() ? "forward index read failed"
                                                  : status.message();
   throw std::runtime_error(message);
+}
+
+Status PreflightLocalArtifactUri(const LoadRequest& request) {
+  if (request.artifact_uri.empty()) {
+    return Status::InvalidArgument("artifact uri is empty");
+  }
+
+  std::string path = request.artifact_uri;
+  const std::string file_scheme = "file://";
+  const auto scheme_pos = path.find("://");
+  if (scheme_pos != std::string::npos) {
+    if (path.rfind(file_scheme, 0) != 0) {
+      return Status::InvalidArgument("artifact uri scheme is unsupported");
+    }
+    path = path.substr(file_scheme.size());
+  }
+  if (path.empty()) {
+    return Status::InvalidArgument("artifact path is empty");
+  }
+  struct stat file_stat {};
+  if (stat(path.c_str(), &file_stat) != 0) {
+    return Status::NotFound("artifact file does not exist");
+  }
+  if (!S_ISREG(file_stat.st_mode)) {
+    return Status::InvalidArgument("artifact path is not a regular file");
+  }
+  return Status::Ok();
 }
 
 }  // namespace
@@ -32,7 +65,21 @@ ForwardIndex::ForwardIndex(const ForwardIndexOptions& options)
       std::make_unique<core::ShardDirectory>(options_.shard_count);
 }
 
-ForwardIndex::~ForwardIndex() = default;
+ForwardIndex::~ForwardIndex() {
+  {
+    std::lock_guard<std::mutex> lock(load_mu_);
+    for (auto& [_, cancellation] : load_cancellations_) {
+      if (cancellation != nullptr) {
+        cancellation->store(true);
+      }
+    }
+  }
+  for (std::thread& worker : load_workers_) {
+    if (worker.joinable()) {
+      worker.join();
+    }
+  }
+}
 
 std::uint32_t ForwardIndex::ShardFor(std::uint64_t primary_key) const noexcept {
   return static_cast<std::uint32_t>(
@@ -106,18 +153,67 @@ std::vector<std::optional<Row>> ForwardIndex::MGet(
 LoadId ForwardIndex::LoadAsync(const LoadRequest& request) {
   std::lock_guard<std::mutex> lock(load_mu_);
   const LoadId id = next_load_id_++;
-
-  LoadState state;
-  state.id = id;
-  state.code = LoadStateCode::kFailed;
-  state.terminal = true;
-  state.message = "Async artifact loading is not implemented in the bootstrap";
-  if (!request.artifact_id.empty()) {
-    state.message += ": ";
-    state.message += request.artifact_id;
+  const Status preflight = PreflightLocalArtifactUri(request);
+  if (!preflight.ok()) {
+    loads_.emplace(id, LoadState{
+                           .id = id,
+                           .code = LoadStateCode::kFailed,
+                           .terminal = true,
+                           .artifact_uri = request.artifact_uri,
+                           .artifact_id = request.artifact_id,
+                           .last_error = preflight.message(),
+                           .message = preflight.message(),
+                       });
+    return id;
   }
 
-  loads_.emplace(id, std::move(state));
+  auto cancellation = std::make_shared<std::atomic_bool>(false);
+  loads_.emplace(id, LoadState{
+                         .id = id,
+                         .code = LoadStateCode::kRunning,
+                         .terminal = false,
+                         .artifact_uri = request.artifact_uri,
+                         .artifact_id = request.artifact_id,
+                     });
+  load_cancellations_.emplace(id, cancellation);
+  load_workers_.emplace_back([this, request, id, cancellation] {
+    LoadState state;
+    (void)core::RunExternalArtifactLoad(
+        request, id, options_,
+        core::AsyncLoadCallbacks{
+            .publish_shard =
+                [this](std::uint32_t shard_id,
+                       std::shared_ptr<const core::ShardState> state) {
+                  return shard_directory_->Publish(shard_id, std::move(state));
+                },
+            .store_state =
+                [this, id](const LoadState& state) {
+                  std::lock_guard<std::mutex> lock(load_mu_);
+                  auto it = loads_.find(id);
+                  if (it == loads_.end()) {
+                    return;
+                  }
+                  if (it->second.code == LoadStateCode::kCancelled &&
+                      it->second.terminal &&
+                      state.code != LoadStateCode::kCancelled) {
+                    LoadState cancelled = state;
+                    cancelled.code = LoadStateCode::kCancelled;
+                    cancelled.terminal = true;
+                    cancelled.message = "load cancelled";
+                    cancelled.last_error = "load cancelled";
+                    it->second = std::move(cancelled);
+                    return;
+                  }
+                  it->second = state;
+                },
+            .is_cancelled =
+                [cancellation] { return cancellation->load(); },
+            .cancellation_requested = cancellation,
+        },
+        &state);
+    std::lock_guard<std::mutex> lock(load_mu_);
+    load_cancellations_.erase(id);
+  });
   return id;
 }
 
@@ -144,7 +240,13 @@ bool ForwardIndex::CancelLoad(LoadId id) {
 
   it->second.code = LoadStateCode::kCancelled;
   it->second.terminal = true;
+  it->second.last_error = "load cancelled";
   it->second.message = "load cancelled";
+  const auto cancellation = load_cancellations_.find(id);
+  if (cancellation != load_cancellations_.end() &&
+      cancellation->second != nullptr) {
+    cancellation->second->store(true);
+  }
   return true;
 }
 

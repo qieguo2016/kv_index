@@ -1,8 +1,8 @@
 # W05 Kafka Update Pipeline
 
 ## Metadata
-- Status: verifying
-- Owner Role: verify agent
+- Status: completed
+- Owner Role: controller
 - Depends on: W04
 - Retry Count: 0
 - Last Updated: 2026-04-30
@@ -168,4 +168,4 @@ Prioritized focused tests:
 - Remaining risk: link steps warn that the Homebrew `librdkafka.1.dylib` was built for a newer macOS version than Bazel's current `macOS-11.0` deployment target. Tests pass on this host, but independent verification should confirm the warning is acceptable for the intended deployment environment.
 
 ## Next Step
-- Controller has accepted the independent `pass` verification and authorized a commit-only coding agent to create the W05 atomic commit with exactly one Codex trailer.
+- Completed in commit `1935434`; proceed to W06.

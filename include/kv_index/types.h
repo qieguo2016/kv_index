@@ -134,6 +134,22 @@ struct LoadState {
   LoadId id = kInvalidLoadId;
   LoadStateCode code = LoadStateCode::kUnknown;
   bool terminal = true;
+  std::string artifact_uri;
+  std::string artifact_id;
+  std::uint32_t total_shard_count = 0;
+  std::uint32_t loaded_shard_count = 0;
+  std::uint32_t prewarmed_shard_count = 0;
+  std::uint32_t cutover_shard_count = 0;
+  KafkaProgress source_progress;
+  struct ShardProgress {
+    std::uint32_t shard_id = 0;
+    bool loaded = false;
+    bool prewarmed = false;
+    bool cutover = false;
+    std::string message;
+  };
+  std::vector<ShardProgress> shards;
+  std::string last_error;
   std::string message;
 };
 

@@ -5,9 +5,50 @@ package(default_visibility = ["//visibility:private"])
 
 cc_library(
     name = "test_support",
-    hdrs = ["test_support/test_macros.h"],
+    srcs = ["test_support/artifact_writer.cc"],
+    hdrs = [
+        "test_support/artifact_writer.h",
+        "test_support/test_macros.h",
+    ],
     includes = ["."],
+    deps = [
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
     visibility = ["//tests:__subpackages__"],
+)
+
+cc_test(
+    name = "artifact_format_test",
+    srcs = ["unit/artifact_format_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
+    name = "mmap_snapshot_backing_test",
+    srcs = ["unit/mmap_snapshot_backing_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
+    name = "async_load_test",
+    srcs = ["unit/async_load_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
 )
 
 cc_test(
@@ -197,9 +238,12 @@ test_suite(
     name = "unit_tests",
     tests = [
         ":byte_io_test",
+        ":async_load_test",
+        ":artifact_format_test",
         ":forward_index_unit_test",
         ":frozen_primary_key_index_test",
         ":kafka_update_consumer_test",
+        ":mmap_snapshot_backing_test",
         ":realtime_atomic_hash_map_test",
         ":realtime_delta_test",
         ":row_decoder_test",
@@ -228,9 +272,12 @@ test_suite(
     name = "all_tests",
     tests = [
         ":byte_io_test",
+        ":async_load_test",
+        ":artifact_format_test",
         ":forward_index_unit_test",
         ":frozen_primary_key_index_test",
         ":kafka_update_consumer_test",
+        ":mmap_snapshot_backing_test",
         ":realtime_atomic_hash_map_test",
         ":realtime_delta_test",
         ":schema_test",

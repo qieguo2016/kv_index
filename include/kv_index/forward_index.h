@@ -2,10 +2,12 @@
 #define KV_INDEX_FORWARD_INDEX_H_
 
 #include <cstdint>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -57,6 +59,9 @@ class ForwardIndex {
   mutable std::mutex load_mu_;
   LoadId next_load_id_ = 1;
   std::unordered_map<LoadId, LoadState> loads_;
+  std::unordered_map<LoadId, std::shared_ptr<std::atomic_bool>>
+      load_cancellations_;
+  std::vector<std::thread> load_workers_;
 };
 
 }  // namespace kv_index

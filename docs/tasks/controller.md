@@ -3,7 +3,7 @@
 ## Metadata
 - Current Date: 2026-04-30
 - Last Restored: 2026-04-30
-- Active Task: W05 Kafka Update Pipeline
+- Active Task: W06 Artifact Format, Mmap Loading, And External AsyncLoad
 - Execution Mode: strict serial multi-agent
 - Branch: main
 
@@ -25,8 +25,8 @@
 | W02 | completed | W01 | 0 | docs/tasks/W02-immutable-snapshot.md |
 | W03 | completed | W02 | 0 | docs/tasks/W03-serving-read-path.md |
 | W04 | completed | W03 | 0 | docs/tasks/W04-realtime-delta.md |
-| W05 | verifying | W04 | 0 | docs/tasks/W05-kafka-update-pipeline.md |
-| W06 | pending | W05 | 0 | docs/tasks/W06-artifact-async-load.md |
+| W05 | completed | W04 | 0 | docs/tasks/W05-kafka-update-pipeline.md |
+| W06 | completed | W05 | 1 | docs/tasks/W06-artifact-async-load.md |
 | W07 | pending | W06 | 0 | docs/tasks/W07-compaction-full-rebase.md |
 | W08 | pending | W07 | 0 | docs/tasks/W08-observability-finalization.md |
 
@@ -36,6 +36,8 @@
 - W02 Immutable Snapshot Module
 - W03 Serving Read Path
 - W04 Realtime Delta Module
+- W05 Kafka Update Pipeline
+- W06 Artifact Format, Mmap Loading, And External AsyncLoad
 
 ## Blocked By Human
 - None.
@@ -69,7 +71,15 @@
 - 2026-04-30: Controller installed/confirmed an `arm64` Homebrew `librdkafka` at `/opt/homebrew/opt/librdkafka` and authorized replacing the failed `/usr/local` binding path with `/opt/homebrew/opt/librdkafka` without modifying `MODULE.bazel`. Dispatching a continuation W05 coding agent with this narrower dependency-path fix scope.
 - 2026-04-30: W05 continuation coding agent returned `DONE_WITH_CONCERNS`: focused W05 tests, `unit_tests`, and `all_tests` passed with the Homebrew binding, but link steps warn that Homebrew `librdkafka.1.dylib` targets a newer macOS version than Bazel's `macOS-11.0` target. Controller moved W05 to independent verification with this warning as an explicit review point.
 - 2026-04-30: W05 verify agent returned `pass` after independent review and focused/aggregate Bazel gates. The Homebrew `librdkafka` newer-macOS warning is accepted as non-blocking for this local macOS 26.0.1 context, with deployment policy risk noted for older macOS support. Controller authorized the W05 atomic commit.
+- 2026-04-30: W05 commit completed as `1935434`. Selected W06 as the next active task because its only dependency is W05.
+- 2026-04-30: W06 plan agent completed planning and updated the task document to `ready_for_impl`. Controller accepted the plan, authorized root/test Bazel plus snapshot/types scope gaps, chose conservative all-partitions-affect-all-shards cutover safety, limited v1 artifacts to local file paths, selected `fnv1a64` checksums, and moved W06 to implementation.
+- 2026-04-30: W06 first coding pass returned `NEEDS_CONTEXT` after controller progress check, not a design blocker. Artifact-format TDD slice is green; mmap backing is mid RED/GREEN after adding files but before compiling the GREEN run; AsyncLoad is still pending. Controller recorded the checkpoint and will dispatch a continuation coding agent from the mmap test command.
+- 2026-04-30: W06 continuation coding agent returned `DONE_WITH_CONCERNS` with focused and aggregate gates passing. Controller reviewed the concern and found a W06 scope gap: the current AsyncLoad path is synchronous and conservative fail-closed, without the required internal catch-up consumer/poll/apply/commit path. Controller will keep W06 in implementation and dispatch a narrow fix agent before independent verify.
+- 2026-04-30: W06 AsyncLoad fix agent returned `DONE` after adding non-blocking `LoadAsync`, owned worker threads, cancellation flags, internal catch-up runner seam, regression tests, and focused/aggregate test results. Controller moved W06 to independent verification.
+- 2026-04-30: W06 verify agent returned `fail` despite all gates passing. Blocking findings: AsyncLoad does not capture cutover safe high-watermarks after rebuild consumer startup, can skip catch-up when artifact checkpoint equals artifact high watermark, and can stop catch-up at the artifact high watermark instead of the observed post-start high watermark. Controller moved W06 to fix retry 1.
+- 2026-04-30: W06 fix retry 1 coding agent returned `DONE` with regressions for post-start safe high-watermark capture and catch-up-to-observed-watermark semantics. Controller moved W06 back to independent verification.
+- 2026-04-30: W06 verify retry 1 returned `pass` after confirming the prior safe-position/catch-up blockers are resolved and focused/aggregate gates plus `bazel build //...` passed. Controller marked W06 completed and authorized the W06 atomic commit.
 
 ## Next Dispatch Decision
-- Dispatch W05 commit-only coding agent.
-- Required W05 commit output: stage the W05 implementation, tests, and task/controller ledger changes; create one atomic commit with exactly one Codex trailer; report commit SHA and final status.
+- Dispatch W06 commit-only coding agent.
+- Required W06 commit output: stage the W06 implementation, tests, build wiring, and task/controller ledger changes; create one atomic commit with exactly one Codex trailer; report commit SHA and final status.

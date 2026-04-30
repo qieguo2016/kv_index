@@ -19,10 +19,13 @@ cc_library(
 cc_library(
     name = "kv_index_internal",
     srcs = [
+        "src/core/artifact_format.cc",
+        "src/core/async_load.cc",
         "src/core/frozen_primary_key_index.cc",
         "src/core/forward_index.cc",
         "src/core/hash.cc",
         "src/core/kafka_update_consumer.cc",
+        "src/core/mmap_snapshot_backing.cc",
         "src/core/realtime_delta.cc",
         "src/core/row_storage.cc",
         "src/core/schema.cc",
@@ -34,10 +37,13 @@ cc_library(
         "src/core/update_coordinator.cc",
     ],
     hdrs = [
+        "src/core/artifact_format.h",
+        "src/core/async_load.h",
         "src/core/byte_io.h",
         "src/core/frozen_primary_key_index.h",
         "src/core/hash.h",
         "src/core/kafka_update_consumer.h",
+        "src/core/mmap_snapshot_backing.h",
         "src/core/realtime_delta.h",
         "src/core/row_storage.h",
         "src/core/shard_directory.h",
