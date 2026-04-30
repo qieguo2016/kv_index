@@ -20,6 +20,13 @@ The value schema is fixed per schema version but can be hot-loaded at runtime. S
 - The first version does not provide global multi-key snapshot isolation across all shards. The core semantic is single-key lookup consistency.
 - The first version does not optimize for field-scan workloads. The common path is point lookup followed by reading all fields.
 
+## Technology Stack
+
+- Build and compilation: use Bazel as the only build entry point. Core libraries, tests, benchmarks, and examples are managed through `BUILD.bazel` / Bazel modules, without a parallel CMake or Makefile build.
+- Language standard: C++20. The design relies on C++20 `std::atomic<std::shared_ptr<T>>`, concepts-friendly API constraints, and clearer memory-model expression.
+- Base library: Abseil (`absl`) is allowed, but default to equivalent C++ standard library components first, such as `std::optional`, `std::string_view`, standard containers, `std::chrono`, `std::atomic`, and standard synchronization primitives. Use Abseil components only when the standard library does not satisfy the requirement, when there is a clear performance or memory-semantics benefit, or when the design explicitly requires them, such as SwissTable-related capabilities, `absl::Cord`, or a project-wide status/error model.
+- Kafka client: use `librdkafka` as the only Kafka integration. `KafkaUpdateConsumer` encapsulates `librdkafka` poll, seek, lag, and offset commit semantics; tests isolate real brokers through a fake adapter or recorded batches.
+
 ## Online API Sketch
 
 ```cpp
@@ -249,6 +256,8 @@ The realtime table avoids application-level read locks. Slot creation uses CAS o
 ## Kafka Consumer Module
 
 V1 only supports Kafka and does not introduce a pluggable data-source abstraction. Kafka consumer concerns are collected in a dedicated module so poll, seek, lag, and offset commit logic do not leak across index update flows. This module contains no index logic: it does not parse schemas, choose generations, write realtime deltas, or perform shard cutover.
+
+In implementation, `KafkaUpdateConsumer` directly wraps `librdkafka` and maps `KafkaConsumerConfig` to `librdkafka` consumer properties. The index layer only depends on the C++20/Abseil-style interface exposed by `KafkaUpdateConsumer`; business logic must not directly propagate `librdkafka` handles, callbacks, or error codes.
 
 Layering:
 

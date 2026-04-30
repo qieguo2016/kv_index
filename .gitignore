@@ -1,0 +1,54 @@
+# Bazel output symlinks and generated files
+/bazel-*
+/bazel-bin
+/bazel-out
+/bazel-testlogs
+
+# Local Bazel and tool configuration
+/.bazelrc.local
+/.bazelrc.user
+/.bazeliskrc.local
+/compile_commands.json
+/compile_flags.txt
+
+# C/C++ build artifacts
+*.o
+*.obj
+*.a
+*.lo
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+*.dSYM/
+
+# Coverage and profiling artifacts
+/coverage/
+/coverage.dat
+*.gcda
+*.gcno
+*.profraw
+*.profdata
+
+# Logs, caches, and temporary files
+*.log
+*.tmp
+*.swp
+*~
+/.cache/
+/.tmp/
+
+# Local worktree scratch space
+/.worktrees/
+
+# Editor and OS files
+.DS_Store
+.idea/
+.vscode/
+
+# Local environment files
+.env
+.env.*
+!.env.example

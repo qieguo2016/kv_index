@@ -20,6 +20,13 @@ value schema 按 schema version 固定，但 schema 本身支持运行期热加�
 - 第一版不提供跨所有 shard 的全局多 key 快照隔离。核心语义是单 key 查询一致性。
 - 第一版不针对字段扫描场景优化。核心访问模式是点查一条记录，并读取全部字段。
 
+## 技术栈
+
+- 编译与构建：使用 Bazel 作为唯一构建入口，核心库、测试、benchmark 和示例都通过 `BUILD.bazel` / Bazel module 管理，不引入 CMake 或 Makefile 双轨构建。
+- 语言标准：C++20。设计依赖 C++20 的 `std::atomic<std::shared_ptr<T>>`、concepts-friendly API 约束和更明确的内存模型表达。
+- 基础库：允许使用 Abseil (`absl`)，但默认优先使用 C++ 标准库中的同类组件，例如 `std::optional`、`std::string_view`、标准容器、`std::chrono`、`std::atomic` 和标准同步原语。只有在标准库无法满足需求、性能/内存语义有明确收益，或设计中明确要求时，才使用 Abseil 组件，例如 SwissTable 相关能力、`absl::Cord` 或项目统一错误模型需要的 status 类型。
+- Kafka 客户端：使用 `librdkafka` 作为唯一 Kafka 接入实现。`KafkaUpdateConsumer` 封装 `librdkafka` 的 poll、seek、lag 和 offset commit 语义；测试通过 fake adapter 或 recorded batch 隔离真实 broker。
+
 ## 在线 API 草图
 
 ```cpp
@@ -249,6 +256,8 @@ realtime table 避免读路径应用层锁。slot 创建使用 CAS 更新 slot k
 ## Kafka Consumer 模块
 
 第一版只支持 Kafka，不引入可插拔数据源抽象。Kafka consumer 相关能力收敛到独立模块，避免 Kafka poll、seek、lag 和 offset commit 逻辑散落在索引更新流程中。该模块不包含索引逻辑：不解析 schema、不选择 generation、不写 realtime delta、不执行 shard cutover。
+
+实现上，`KafkaUpdateConsumer` 直接封装 `librdkafka`，并把 `KafkaConsumerConfig` 映射到 `librdkafka` consumer properties。索引层只依赖 `KafkaUpdateConsumer` 暴露的 C++20/Abseil 风格接口，不在业务逻辑中直接传播 `librdkafka` handle、callback 或 error code。
 
 层次关系：
 
