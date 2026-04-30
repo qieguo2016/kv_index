@@ -49,6 +49,7 @@ class ForwardIndex {
   LoadId LoadAsync(const LoadRequest& request);
   LoadState GetLoadState(LoadId id) const;
   bool CancelLoad(LoadId id);
+  RuntimeStatus GetRuntimeStatus() const;
 
  private:
   friend class core::ForwardIndexTestPeer;

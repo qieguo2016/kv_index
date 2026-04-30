@@ -86,17 +86,6 @@ class RealtimeAtomicHashMap {
   std::atomic<std::size_t> unique_key_count_ = 0;
 };
 
-struct RealtimeDeltaStats {
-  std::size_t hash_capacity = 0;
-  std::size_t unique_visible_keys = 0;
-  std::size_t published_row_count = 0;
-  std::uint64_t row_slot_bytes = 0;
-  std::uint64_t payload_pool_bytes = 0;
-  double load_factor = 0.0;
-
-  double UniqueKeyRatio(std::uint64_t full_snapshot_row_count) const noexcept;
-};
-
 bool ShouldCompactRealtimeDelta(const RealtimeDeltaStats& stats,
                                 std::uint64_t full_snapshot_row_count,
                                 const ThresholdConfig& thresholds) noexcept;

@@ -183,4 +183,4 @@ Exit criteria:
 - Delete/tombstone semantics are not present in current W04-W06 contracts. W07 compaction/rebase should cover complete-row upserts only and should not invent delete semantics.
 
 ## Next Step
-- Independent W07 verify retry 1 passed. Controller authorized a commit-only coding agent to create the W07 atomic commit with exactly one Codex trailer.
+- Completed in commit `b3ff052`; proceed to W08.

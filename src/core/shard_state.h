@@ -40,6 +40,7 @@ class ShardState {
   StatusOr<std::optional<Row>> Get(std::uint64_t primary_key) const;
   StatusOr<std::vector<std::optional<Row>>> MGet(
       const std::vector<std::uint64_t>& primary_keys) const;
+  ShardRuntimeStatus GetRuntimeStatus() const;
 
  private:
   std::uint32_t shard_id_ = 0;

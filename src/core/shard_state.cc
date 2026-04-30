@@ -4,7 +4,21 @@
 #include <utility>
 #include <vector>
 
+#include "src/core/mmap_snapshot_backing.h"
+
 namespace kv_index::core {
+namespace {
+
+void CopyLayoutMetadata(const std::shared_ptr<const CompiledRowLayout>& layout,
+                        ShardRuntimeStatus* status) {
+  if (layout == nullptr || status == nullptr || status->schema_version != 0) {
+    return;
+  }
+  status->schema_version = layout->schema_version();
+  status->layout_fingerprint = layout->layout_fingerprint();
+}
+
+}  // namespace
 
 ShardState::ShardState(std::uint32_t shard_id, std::uint64_t generation,
                        Layers layers)
@@ -61,6 +75,43 @@ StatusOr<std::vector<std::optional<Row>>> ShardState::MGet(
     rows.push_back(std::move(row).value());
   }
   return rows;
+}
+
+ShardRuntimeStatus ShardState::GetRuntimeStatus() const {
+  ShardRuntimeStatus status{
+      .shard_id = shard_id_,
+      .generation = generation_,
+  };
+
+  if (realtime_delta_ != nullptr) {
+    status.has_realtime_delta = true;
+    status.realtime_delta = realtime_delta_->stats();
+    CopyLayoutMetadata(realtime_delta_->layout(), &status);
+  }
+
+  if (compact_delta_.has_value()) {
+    status.has_compact_delta = true;
+    if (compact_delta_->backing() != nullptr) {
+      status.compact_row_count = compact_delta_->backing()->row_count();
+      CopyLayoutMetadata(compact_delta_->backing()->layout(), &status);
+    }
+  }
+
+  if (full_snapshot_.has_value()) {
+    status.has_full_snapshot = true;
+    const auto& backing = full_snapshot_->backing();
+    if (backing != nullptr) {
+      status.full_row_count = backing->row_count();
+      CopyLayoutMetadata(backing->layout(), &status);
+      if (const auto* mmap = dynamic_cast<const MmapSnapshotBacking*>(
+              backing.get());
+          mmap != nullptr) {
+        status.artifact_id = mmap->artifact().artifact_id;
+      }
+    }
+  }
+
+  return status;
 }
 
 }  // namespace kv_index::core

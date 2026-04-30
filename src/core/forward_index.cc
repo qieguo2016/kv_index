@@ -250,4 +250,43 @@ bool ForwardIndex::CancelLoad(LoadId id) {
   return true;
 }
 
+RuntimeStatus ForwardIndex::GetRuntimeStatus() const {
+  RuntimeStatus status{
+      .shard_count = options_.shard_count,
+  };
+  status.shards.reserve(options_.shard_count);
+  for (std::uint32_t shard_id = 0; shard_id < options_.shard_count;
+       ++shard_id) {
+    auto shard = shard_directory_->Load(shard_id);
+    if (!shard.ok()) {
+      status.shards.push_back(ShardRuntimeStatus{
+          .shard_id = shard_id,
+          .last_error = shard.status().message(),
+      });
+      if (status.last_error.empty()) {
+        status.last_error = shard.status().message();
+      }
+      continue;
+    }
+    if (*shard == nullptr) {
+      status.shards.push_back(ShardRuntimeStatus{.shard_id = shard_id});
+      continue;
+    }
+    status.shards.push_back((*shard)->GetRuntimeStatus());
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(load_mu_);
+    status.loads.reserve(loads_.size());
+    for (const auto& [_, state] : loads_) {
+      status.loads.push_back(state);
+      if (!state.last_error.empty()) {
+        status.last_error = state.last_error;
+      }
+    }
+  }
+
+  return status;
+}
+
 }  // namespace kv_index

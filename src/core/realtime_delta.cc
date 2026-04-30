@@ -206,15 +206,6 @@ Status RealtimeAtomicHashMap::ReserveSlotForTesting(
   return Status::FailedPrecondition("realtime hash map capacity exhausted");
 }
 
-double RealtimeDeltaStats::UniqueKeyRatio(
-    std::uint64_t full_snapshot_row_count) const noexcept {
-  if (full_snapshot_row_count == 0) {
-    return 0.0;
-  }
-  return static_cast<double>(unique_visible_keys) /
-         static_cast<double>(full_snapshot_row_count);
-}
-
 bool ShouldCompactRealtimeDelta(
     const RealtimeDeltaStats& stats, std::uint64_t full_snapshot_row_count,
     const ThresholdConfig& thresholds) noexcept {

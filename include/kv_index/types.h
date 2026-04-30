@@ -63,6 +63,23 @@ struct ThresholdConfig {
   std::uint32_t cutover_batch_size = 1;
 };
 
+struct RealtimeDeltaStats {
+  std::size_t hash_capacity = 0;
+  std::size_t unique_visible_keys = 0;
+  std::size_t published_row_count = 0;
+  std::uint64_t row_slot_bytes = 0;
+  std::uint64_t payload_pool_bytes = 0;
+  double load_factor = 0.0;
+
+  double UniqueKeyRatio(std::uint64_t full_snapshot_row_count) const noexcept {
+    if (full_snapshot_row_count == 0) {
+      return 0.0;
+    }
+    return static_cast<double>(unique_visible_keys) /
+           static_cast<double>(full_snapshot_row_count);
+  }
+};
+
 struct KafkaConsumerConfig {
   std::string bootstrap_servers;
   std::string group_id;
@@ -151,6 +168,29 @@ struct LoadState {
   std::vector<ShardProgress> shards;
   std::string last_error;
   std::string message;
+};
+
+struct ShardRuntimeStatus {
+  std::uint32_t shard_id = 0;
+  std::uint64_t generation = 0;
+  std::uint64_t schema_version = 0;
+  std::uint64_t layout_fingerprint = 0;
+  std::string artifact_id;
+  bool has_realtime_delta = false;
+  bool has_compact_delta = false;
+  bool has_full_snapshot = false;
+  RealtimeDeltaStats realtime_delta;
+  std::uint64_t compact_row_count = 0;
+  std::uint64_t full_row_count = 0;
+  std::uint64_t accessor_mismatch_count = 0;
+  std::string last_error;
+};
+
+struct RuntimeStatus {
+  std::uint32_t shard_count = 0;
+  std::vector<ShardRuntimeStatus> shards;
+  std::vector<LoadState> loads;
+  std::string last_error;
 };
 
 }  // namespace kv_index

@@ -1,4 +1,5 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(default_visibility = ["//visibility:private"])
@@ -106,6 +107,17 @@ cc_test(
 )
 
 cc_test(
+    name = "lifetime_test",
+    srcs = ["unit/lifetime_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
     name = "frozen_primary_key_index_test",
     srcs = ["unit/frozen_primary_key_index_test.cc"],
     size = "small",
@@ -162,6 +174,17 @@ cc_test(
 cc_test(
     name = "realtime_delta_test",
     srcs = ["unit/realtime_delta_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
+    name = "runtime_status_test",
+    srcs = ["unit/runtime_status_test.cc"],
     size = "small",
     deps = [
         ":test_support",
@@ -268,6 +291,82 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "read_precedence_integration_test",
+    srcs = ["integration/read_precedence_integration_test.cc"],
+    size = "small",
+    tags = ["integration"],
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
+    name = "async_load_cutover_integration_test",
+    srcs = ["integration/async_load_cutover_integration_test.cc"],
+    size = "small",
+    tags = ["integration"],
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
+    name = "schema_evolution_integration_test",
+    srcs = ["integration/schema_evolution_integration_test.cc"],
+    size = "small",
+    tags = ["integration"],
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_binary(
+    name = "get_benchmark",
+    srcs = ["benchmark/get_benchmark.cc"],
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_binary(
+    name = "mget_benchmark",
+    srcs = ["benchmark/mget_benchmark.cc"],
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_binary(
+    name = "realtime_delta_benchmark",
+    srcs = ["benchmark/realtime_delta_benchmark.cc"],
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_binary(
+    name = "snapshot_decode_benchmark",
+    srcs = ["benchmark/snapshot_decode_benchmark.cc"],
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
 test_suite(
     name = "unit_tests",
     tests = [
@@ -279,9 +378,11 @@ test_suite(
         ":full_rebase_test",
         ":frozen_primary_key_index_test",
         ":kafka_update_consumer_test",
+        ":lifetime_test",
         ":mmap_snapshot_backing_test",
         ":realtime_atomic_hash_map_test",
         ":realtime_delta_test",
+        ":runtime_status_test",
         ":row_decoder_test",
         ":schema_test",
         ":shard_directory_test",
@@ -302,8 +403,11 @@ test_suite(
 test_suite(
     name = "integration_tests",
     tests = [
+        ":async_load_cutover_integration_test",
         ":compaction_rebase_integration_test",
         ":forward_index_integration_test",
+        ":read_precedence_integration_test",
+        ":schema_evolution_integration_test",
     ],
 )
 
@@ -318,9 +422,11 @@ test_suite(
         ":full_rebase_test",
         ":frozen_primary_key_index_test",
         ":kafka_update_consumer_test",
+        ":lifetime_test",
         ":mmap_snapshot_backing_test",
         ":realtime_atomic_hash_map_test",
         ":realtime_delta_test",
+        ":runtime_status_test",
         ":schema_test",
         ":row_decoder_test",
         ":shard_directory_test",
@@ -330,8 +436,11 @@ test_suite(
         ":status_unit_test",
         ":update_applier_test",
         ":update_coordinator_test",
+        ":async_load_cutover_integration_test",
         ":compaction_rebase_integration_test",
         ":forward_index_integration_test",
+        ":read_precedence_integration_test",
+        ":schema_evolution_integration_test",
         ":kv_index_smoke_test",
     ],
 )

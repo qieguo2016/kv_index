@@ -17,6 +17,10 @@
 #include "kv_index/schema.h"
 #include "src/core/async_load.h"
 #include "src/core/row_storage.h"
+#include "src/core/shard_state.h"
+#include "src/core/snapshot.h"
+#include "src/core/snapshot_builder.h"
+#include "src/core/test_peer.h"
 #include "tests/test_support/artifact_writer.h"
 #include "tests/test_support/test_macros.h"
 
@@ -39,6 +43,11 @@ using kv_index::StatusOr;
 using kv_index::core::AsyncCatchUpRequest;
 using kv_index::core::AsyncCatchUpRunner;
 using kv_index::core::AsyncCatchUpRunnerFactory;
+using kv_index::core::ForwardIndexTestPeer;
+using kv_index::core::FullSnapshotView;
+using kv_index::core::OwnedSnapshotBacking;
+using kv_index::core::ShardState;
+using kv_index::core::SnapshotBuilder;
 using kv_index::test_support::ArtifactShardSpec;
 using kv_index::test_support::TestArtifactSpec;
 using kv_index::test_support::TestSourceProgress;
@@ -81,6 +90,27 @@ storage::EncodedRow MakeRow(const CompiledRowLayout& layout,
   KV_INDEX_CHECK(field != nullptr);
   KV_INDEX_CHECK(storage::WriteScalarField(*field, score, &encoded).ok());
   return encoded;
+}
+
+std::shared_ptr<const OwnedSnapshotBacking> Snapshot(
+    std::shared_ptr<const CompiledRowLayout> layout, std::uint64_t key,
+    std::int32_t score) {
+  SnapshotBuilder builder(layout);
+  KV_INDEX_CHECK(builder.AddRow(key, MakeRow(*layout, score)).ok());
+  auto backing = builder.Seal();
+  KV_INDEX_CHECK(backing.ok());
+  return backing.value();
+}
+
+std::shared_ptr<const ShardState> FullState(
+    std::uint32_t shard_id, std::uint64_t generation,
+    std::shared_ptr<const CompiledRowLayout> layout, std::uint64_t key,
+    std::int32_t score) {
+  return std::make_shared<const ShardState>(
+      shard_id, generation,
+      ShardState::Layers{
+          .full_snapshot = FullSnapshotView(Snapshot(layout, key, score)),
+      });
 }
 
 class ScopedCatchUpRunnerFactory {
@@ -415,6 +445,18 @@ void CancellationBeforeCutoverPreventsPublish() {
   const std::string path = TempPath("async_load_cancel_before_cutover.kvi");
   auto spec = TwoShardSpec(options, key, 555, 5, 8);
   KV_INDEX_CHECK(WriteTestArtifact(path, spec).ok());
+  KV_INDEX_CHECK(ForwardIndexTestPeer::PublishShard(
+                     index, FullState(1, 41, spec.layout, key, 111))
+                     .ok());
+  const auto before = ForwardIndexTestPeer::LoadShard(index, 1);
+  KV_INDEX_CHECK(before.ok());
+  KV_INDEX_CHECK((*before) != nullptr);
+  KV_INDEX_CHECK_EQ((*before)->Generation(), 41U);
+  {
+    auto old_row = index.Get(key);
+    KV_INDEX_CHECK(old_row.has_value());
+    KV_INDEX_CHECK_EQ(old_row->Get<std::int32_t>(1).value(), 111);
+  }
 
   auto control = std::make_shared<FakeCatchUpControl>();
   control->progress_observations.push_back(SinglePartitionProgress(5, 8));
@@ -439,7 +481,17 @@ void CancellationBeforeCutoverPreventsPublish() {
                  state.code == LoadStateCode::kFailed);
   KV_INDEX_CHECK(state.terminal);
   KV_INDEX_CHECK_EQ(state.cutover_shard_count, 0U);
-  KV_INDEX_CHECK(!index.Get(key).has_value());
+  KV_INDEX_CHECK(state.last_error.find("cancel") != std::string::npos ||
+                 state.message.find("cancel") != std::string::npos);
+  auto row = index.Get(key);
+  KV_INDEX_CHECK(row.has_value());
+  KV_INDEX_CHECK_EQ(row->Get<std::int32_t>(1).value(), 111);
+  const auto status = index.GetRuntimeStatus();
+  KV_INDEX_CHECK_EQ(status.shards[1].generation, 41U);
+  const auto after = ForwardIndexTestPeer::LoadShard(index, 1);
+  KV_INDEX_CHECK(after.ok());
+  KV_INDEX_CHECK((*after) != nullptr);
+  KV_INDEX_CHECK_EQ((*after)->Generation(), 41U);
 }
 
 void CatchUpStartsAtArtifactCheckpointAndAdvancesToSafeWatermark() {
