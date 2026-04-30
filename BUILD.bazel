@@ -1,0 +1,19 @@
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_library(
+    name = "kv_index",
+    srcs = [
+        "src/core/forward_index.cc",
+        "src/version.cc",
+    ],
+    hdrs = [
+        "include/kv_index/forward_index.h",
+        "include/kv_index/kv_index.h",
+        "include/kv_index/row.h",
+        "include/kv_index/types.h",
+        "include/kv_index/version.h",
+    ],
+    includes = ["include"],
+)
