@@ -11,8 +11,40 @@ cc_library(
 )
 
 cc_test(
+    name = "byte_io_test",
+    srcs = ["unit/byte_io_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+    ],
+)
+
+cc_test(
     name = "forward_index_unit_test",
     srcs = ["unit/forward_index_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
+    name = "schema_test",
+    srcs = ["unit/schema_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
+    name = "row_decoder_test",
+    srcs = ["unit/row_decoder_test.cc"],
     size = "small",
     deps = [
         ":test_support",
@@ -56,7 +88,10 @@ cc_test(
 test_suite(
     name = "unit_tests",
     tests = [
+        ":byte_io_test",
         ":forward_index_unit_test",
+        ":row_decoder_test",
+        ":schema_test",
         ":status_unit_test",
     ],
 )
@@ -74,7 +109,10 @@ test_suite(
 test_suite(
     name = "all_tests",
     tests = [
+        ":byte_io_test",
         ":forward_index_unit_test",
+        ":schema_test",
+        ":row_decoder_test",
         ":status_unit_test",
         ":forward_index_integration_test",
         ":kv_index_smoke_test",

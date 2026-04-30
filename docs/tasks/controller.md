@@ -21,7 +21,7 @@
 | Task | Status | Depends On | Retry Count | Task Document |
 | --- | --- | --- | --- | --- |
 | W00 | completed | none | 0 | docs/tasks/W00-foundation-and-build-layout.md |
-| W01 | pending | W00 | 0 | docs/tasks/W01-schema-row-materialization.md |
+| W01 | completed | W00 | 1 | docs/tasks/W01-schema-row-materialization.md |
 | W02 | pending | W01 | 0 | docs/tasks/W02-immutable-snapshot.md |
 | W03 | pending | W02 | 0 | docs/tasks/W03-serving-read-path.md |
 | W04 | pending | W03 | 0 | docs/tasks/W04-realtime-delta.md |
@@ -32,6 +32,7 @@
 
 ## Completed Tasks
 - W00 Foundation And Build Layout
+- W01 Schema, Layout, Row Semantics, And Row Materialization Contract
 
 ## Blocked By Human
 - None.
@@ -41,7 +42,13 @@
 - 2026-04-30: W00 plan agent completed planning and updated the task document to `ready_for_impl`. Controller reviewed required planning content and moved W00 to implementation.
 - 2026-04-30: W00 coding agent completed implementation, updated the task document, and reported focused tests passing. Controller moved W00 to independent verification.
 - 2026-04-30: W00 verify agent returned `pass` after independent focused tests and implementation review. Controller marked W00 completed and authorized the W00 commit.
+- 2026-04-30: W00 commit completed as `dc85d5e`. Selected W01 as the next active task because its only dependency is W00.
+- 2026-04-30: W01 plan agent completed planning and updated the task document to `ready_for_impl`. Controller reviewed required planning content and moved W01 to implementation.
+- 2026-04-30: W01 coding agent completed implementation with TDD red/green notes and focused tests passing. Controller moved W01 to independent verification.
+- 2026-04-30: W01 verify agent returned `fail` for accessor mismatch being converted to absence when the accessor field is missing from the target row layout. Controller confirmed the root cause and moved W01 to fix retry 1.
+- 2026-04-30: W01 fix retry 1 completed with scalar/list regression tests and focused gates passing. Controller moved W01 back to independent verification.
+- 2026-04-30: W01 verify agent retry 1 returned `pass` after focused tests, `unit_tests`, `all_tests`, and uncached `all_tests`. Controller marked W01 completed and authorized the W01 commit.
 
 ## Next Dispatch Decision
-- Dispatch W00 commit-only coding agent.
-- After the W00 commit succeeds, select W01 as the next active task because W00 will be complete and W01 depends only on W00.
+- Dispatch W01 commit-only coding agent.
+- After the W01 commit succeeds, select W02 as the next active task because W01 will be complete and W02 depends only on W01.

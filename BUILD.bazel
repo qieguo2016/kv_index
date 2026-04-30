@@ -8,6 +8,7 @@ cc_library(
         "include/kv_index/forward_index.h",
         "include/kv_index/kv_index.h",
         "include/kv_index/row.h",
+        "include/kv_index/schema.h",
         "include/kv_index/status.h",
         "include/kv_index/types.h",
         "include/kv_index/version.h",
@@ -20,8 +21,14 @@ cc_library(
     srcs = [
         "src/core/forward_index.cc",
         "src/core/hash.cc",
+        "src/core/row_storage.cc",
+        "src/core/schema.cc",
     ],
-    hdrs = ["src/core/hash.h"],
+    hdrs = [
+        "src/core/byte_io.h",
+        "src/core/hash.h",
+        "src/core/row_storage.h",
+    ],
     deps = [":kv_index_public_headers"],
     visibility = [
         "//:__pkg__",
