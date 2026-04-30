@@ -1,7 +1,7 @@
 # kv_index
 
 `kv_index` is a C++20 embedded in-memory forward-index library scaffolded for
-the design in `docs/superpowers/specs/2026-04-26-in-memory-forward-index-design.zh.md`.
+the design in `docs/superpowers/specs/2026-04-26-in-memory-forward-index-design.md`.
 
 ## Build And Test
 

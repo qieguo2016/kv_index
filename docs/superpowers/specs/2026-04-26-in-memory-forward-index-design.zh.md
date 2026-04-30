@@ -350,6 +350,8 @@ full snapshot 应尽量 mmap-friendly。row arena、string pools、list pools �
 - 外部 full artifact 必须通过 read-only mmap 加载，不提供 full dataset heap load 模式。
 - mmap 使用 private/read-only mapping；row arena、string pools、list pools 和 frozen primary-key index 均从 artifact section 直接读取。
 - loader 必须校验 header、format version、section directory、schema compatibility 和 checksum；失败时 fail closed，当前 serving shard 不变。
+- 为了避免 shard 首次 serving 请求落到 major/minor page fault，cutover 前必须对将要 serving 的 full shard 执行 prewarm。prewarm 至少覆盖 frozen primary-key index、row arena、string pools 和 list pools，对每个 section 做按页触碰，把页提前 fault-in 到 page cache/页表后，才允许该 shard 切换到新 generation。
+- `madvise(..., MADV_WILLNEED)` 或同类预读提示可以作为辅助，但不作为 cutover 安全条件；第一版应以用户态按页触碰成功作为 prewarm 完成判据。默认不要求 `mlock`。
 - 内部 `Full Rebase` 和 compact delta snapshot 可以使用 owned heap backing，但 seal 后必须暴露与 mmap full snapshot 相同的 `ImmutableRowSnapshotView`。
 
 ## 主键索引
@@ -702,11 +704,12 @@ Rebuild Catch-up
 
 ```text
 1. 从 sharded artifact 加载 shard_i 的 new_full。
-2. 确认 RebuildGeneration shard_i 相关的所有 Kafka partitions lag 都低于配置阈值，并且已追过 Live Apply 为 shard_i 发布过的安全 source position。
-3. 把 new_full_i 绑定到 RebuildGeneration shard_i。
-4. 原子替换 active_shards[i] 为 RebuildGeneration shard_i。
-5. 两个 `KafkaUpdateConsumer` 继续保持全局运行。
-6. 等 reader drain 后释放旧 shard。
+2. 对 `new_full_i` 执行 prewarm：按页触碰 frozen primary-key index、row arena、string pools 和 list pools，确认该 shard 首次请求不会依赖磁盘缺页加载。
+3. 确认 RebuildGeneration shard_i 相关的所有 Kafka partitions lag 都低于配置阈值，并且已追过 Live Apply 为 shard_i 发布过的安全 source position。
+4. 把 new_full_i 绑定到 RebuildGeneration shard_i。
+5. 原子替换 active_shards[i] 为 RebuildGeneration shard_i。
+6. 两个 `KafkaUpdateConsumer` 继续保持全局运行。
+7. 等 reader drain 后释放旧 shard。
 ```
 
 shard_i 切换瞬间：
@@ -724,7 +727,7 @@ old_full + old_realtime_delta
 
 它们的 RebuildGeneration realtime delta 会在后台继续积累，直到各自完成 cutover。
 
-shard 切换后，该 shard 的查询读取 RebuildGeneration。Live Apply 继续全局消费并写入 ActiveGeneration，直到整个 rebuild 完成，但这些写入对已切换 shard 不再 serving-visible。Rebuild Catch-up 是已切换 shard 的 serving-visible stream，并且必须按照配置的 per-partition lag threshold 保持追平。cutover coordinator 需要按 Kafka partition 追踪 lag；只有该 shard 相关的所有 partitions 都低于阈值时，才能认为 rebuild catch-up 已经追上。
+shard 切换后，该 shard 的查询读取 RebuildGeneration。Live Apply 继续全局消费并写入 ActiveGeneration，直到整个 rebuild 完成，但这些写入对已切换 shard 不再 serving-visible。Rebuild Catch-up 是已切换 shard 的 serving-visible stream，并且必须按照配置的 per-partition lag threshold 保持追平。cutover coordinator 需要按 Kafka partition 追踪 lag；只有该 shard 相关的所有 partitions 都低于阈值，并且 new full shard 的 prewarm 已完成时，才能认为该 shard 满足 cutover 条件。
 
 shard cutover batch 默认：
 

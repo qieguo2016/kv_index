@@ -350,6 +350,8 @@ V1 requires mmap for external full artifacts:
 - External full artifacts must be loaded through read-only mmap; full dataset heap loading is not provided.
 - The mmap is private/read-only; row arena, string pools, list pools, and frozen primary-key index are all read directly from artifact sections.
 - The loader must validate header, format version, section directory, schema compatibility, and checksums. On failure it fails closed and leaves the current serving shard unchanged.
+- To avoid the first serving request for a shard paying major or minor page-fault cost, cutover must require a full-shard prewarm step. At minimum, prewarm covers the frozen primary-key index, row arena, string pools, and list pools by touching each page so the pages are faulted into cache/page tables before the shard becomes serving-visible.
+- `madvise(..., MADV_WILLNEED)` or similar readahead hints may be used as an optimization, but they are not sufficient as the readiness condition for cutover. V1 should treat successful userspace page-touch prewarm as the completion criterion. `mlock` is not required by default.
 - Internal `Full Rebase` and compact delta snapshots may use owned heap backing, but after sealing they must expose the same `ImmutableRowSnapshotView` as mmap full snapshots.
 
 ## Primary Key Index
@@ -702,11 +704,12 @@ Per-shard cutover:
 
 ```text
 1. Load new_full for shard_i from the sharded artifact.
-2. Ensure every Kafka partition relevant to RebuildGeneration shard_i is below the configured lag threshold and has replayed through the safe source position published by Live Apply for shard_i.
-3. Attach new_full_i to RebuildGeneration shard_i.
-4. Atomically replace active_shards[i] with RebuildGeneration shard_i.
-5. Keep both `KafkaUpdateConsumer`s running globally.
-6. Release the old shard when readers drain.
+2. Prewarm `new_full_i` by touching each page of the frozen primary-key index, row arena, string pools, and list pools so the shard does not rely on disk-backed page faults on its first serving request.
+3. Ensure every Kafka partition relevant to RebuildGeneration shard_i is below the configured lag threshold and has replayed through the safe source position published by Live Apply for shard_i.
+4. Attach new_full_i to RebuildGeneration shard_i.
+5. Atomically replace active_shards[i] with RebuildGeneration shard_i.
+6. Keep both `KafkaUpdateConsumer`s running globally.
+7. Release the old shard when readers drain.
 ```
 
 At the moment shard_i switches:
@@ -724,7 +727,7 @@ old_full + old_realtime_delta
 
 Their RebuildGeneration realtime deltas continue accumulating in the background until their own cutover.
 
-After a shard switches, queries for that shard read RebuildGeneration. Live Apply continues consuming and writing ActiveGeneration globally until the rebuild completes, but those writes are no longer serving-visible for switched shards. Rebuild Catch-up is the serving-visible stream for switched shards and must stay caught up according to the configured per-partition lag threshold. The cutover coordinator tracks lag by Kafka partition; only when every partition relevant to that shard is below the threshold can rebuild catch-up be considered caught up.
+After a shard switches, queries for that shard read RebuildGeneration. Live Apply continues consuming and writing ActiveGeneration globally until the rebuild completes, but those writes are no longer serving-visible for switched shards. Rebuild Catch-up is the serving-visible stream for switched shards and must stay caught up according to the configured per-partition lag threshold. The cutover coordinator tracks lag by Kafka partition; only when every partition relevant to that shard is below the threshold and the new full shard has completed prewarm can rebuild catch-up be considered ready for cutover.
 
 Rebuild generation delta limits:
 

@@ -15,7 +15,7 @@
 
 - [中文设计文档](docs/superpowers/specs/2026-04-26-in-memory-forward-index-design.zh.md)
 - [English design document](docs/superpowers/specs/2026-04-26-in-memory-forward-index-design.md)
-- [实现计划](docs/superpowers/plans/2026-04-27-in-memory-forward-index-implementation.md)
+- [实现计划](docs/superpowers/plans/2026-04-30-in-memory-forward-index-detailed-implementation.md)
 
 ## 构建和测试命令
 
