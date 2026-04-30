@@ -26,6 +26,16 @@ class ShardState {
 
   std::uint32_t ShardId() const noexcept { return shard_id_; }
   std::uint64_t Generation() const noexcept { return generation_; }
+  const std::shared_ptr<const RealtimeDeltaAtomicTable>& realtime_delta()
+      const noexcept {
+    return realtime_delta_;
+  }
+  const std::optional<CompactDeltaSnapshot>& compact_delta() const noexcept {
+    return compact_delta_;
+  }
+  const std::optional<FullSnapshotView>& full_snapshot() const noexcept {
+    return full_snapshot_;
+  }
 
   StatusOr<std::optional<Row>> Get(std::uint64_t primary_key) const;
   StatusOr<std::vector<std::optional<Row>>> MGet(

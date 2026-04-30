@@ -168,4 +168,4 @@ Exit criteria:
 - Remaining risk: `ForwardIndex` now joins owned load worker threads in the destructor; internal test catch-up runners must not block forever without observing cancellation or being released.
 
 ## Next Step
-- Independent W06 verify retry 1 passed. Controller authorized a commit-only coding agent to create the W06 atomic commit with exactly one Codex trailer.
+- Completed in commit `f76fb14`; proceed to W07.

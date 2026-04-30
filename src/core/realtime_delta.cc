@@ -1,11 +1,13 @@
 #include "src/core/realtime_delta.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -65,7 +67,7 @@ std::size_t RealtimeAtomicHashMap::ProbeIndex(
   return static_cast<std::size_t>((hash + probe) % capacity_);
 }
 
-Status RealtimeAtomicHashMap::PublishExisting(
+StatusOr<bool> RealtimeAtomicHashMap::PublishExisting(
     Slot* slot, const RealtimeRowRef* row_ref) {
   while (true) {
     const RealtimeRowRef* current =
@@ -80,19 +82,28 @@ Status RealtimeAtomicHashMap::PublishExisting(
       return decision.status();
     }
     if (decision.value() != SourcePositionUpdateDecision::kNewer) {
-      return Status::Ok();
+      return false;
     }
 
     if (slot->latest_row.compare_exchange_weak(
             current, row_ref, std::memory_order_release,
             std::memory_order_acquire)) {
-      return Status::Ok();
+      return true;
     }
   }
 }
 
 Status RealtimeAtomicHashMap::Publish(std::uint64_t primary_key,
                                       const RealtimeRowRef* row_ref) {
+  auto result = PublishAndReport(primary_key, row_ref);
+  if (!result.ok()) {
+    return result.status();
+  }
+  return Status::Ok();
+}
+
+StatusOr<bool> RealtimeAtomicHashMap::PublishAndReport(
+    std::uint64_t primary_key, const RealtimeRowRef* row_ref) {
   if (row_ref == nullptr) {
     return Status::InvalidArgument("realtime row ref must not be null");
   }
@@ -131,7 +142,7 @@ Status RealtimeAtomicHashMap::Publish(std::uint64_t primary_key,
     slot.latest_row.store(row_ref, std::memory_order_release);
     slot.state.store(SlotState::kOccupied, std::memory_order_release);
     unique_key_count_.fetch_add(1, std::memory_order_release);
-    return Status::Ok();
+    return true;
   }
 
   return Status::FailedPrecondition("realtime hash map capacity exhausted");
@@ -270,14 +281,21 @@ Status RealtimeDeltaAtomicTable::Publish(std::uint64_t primary_key,
   const RealtimeRowRef* visible_ref = row_ref->get();
   {
     std::lock_guard<std::mutex> lock(rows_mutex_);
+    rows_.push_back(std::move(row_ref).value());
+    auto published = map_.PublishAndReport(primary_key, visible_ref);
+    if (!published.ok()) {
+      return published.status();
+    }
+    if (published.value()) {
+      rows_.back()->sealed_visible = true;
+    }
     row_slot_bytes_.fetch_add(visible_ref->row_slot_bytes,
                               std::memory_order_release);
     payload_pool_bytes_.fetch_add(visible_ref->payload_pool_bytes,
                                   std::memory_order_release);
-    rows_.push_back(std::move(row_ref).value());
   }
 
-  return map_.Publish(primary_key, visible_ref);
+  return Status::Ok();
 }
 
 StatusOr<std::optional<Row>> RealtimeDeltaAtomicTable::Get(
@@ -297,6 +315,58 @@ StatusOr<std::optional<Row>> RealtimeDeltaAtomicTable::Get(
     return Status::Internal("realtime row ref has no encoded row");
   }
   return std::optional<Row>(Row(layout_, ref->encoded));
+}
+
+RealtimeDeltaBoundary RealtimeDeltaAtomicTable::CaptureCompactionBoundary()
+    const {
+  std::lock_guard<std::mutex> lock(rows_mutex_);
+  return RealtimeDeltaBoundary{.row_count = rows_.size()};
+}
+
+StatusOr<std::vector<RealtimeVisibleRow>> RealtimeDeltaAtomicTable::
+    ScanVisibleRows(RealtimeDeltaBoundary boundary) const {
+  std::lock_guard<std::mutex> lock(rows_mutex_);
+  const std::size_t limit = std::min(boundary.row_count, rows_.size());
+  std::unordered_map<std::uint64_t, const RealtimeRowRef*> latest;
+  latest.reserve(limit);
+  for (std::size_t i = 0; i < limit; ++i) {
+    const RealtimeRowRef* row = rows_[i].get();
+    if (row == nullptr || !row->sealed_visible) {
+      continue;
+    }
+    auto it = latest.find(row->primary_key);
+    if (it == latest.end()) {
+      latest.emplace(row->primary_key, row);
+      continue;
+    }
+    auto decision =
+        ClassifySourcePositionUpdate(it->second->position, row->position);
+    if (!decision.ok()) {
+      return decision.status();
+    }
+    if (decision.value() == SourcePositionUpdateDecision::kNewer) {
+      it->second = row;
+    }
+  }
+
+  std::vector<RealtimeVisibleRow> visible;
+  visible.reserve(latest.size());
+  for (const auto& [primary_key, row] : latest) {
+    if (row->encoded == nullptr) {
+      return Status::Internal("sealed realtime row has no encoded row");
+    }
+    visible.push_back(RealtimeVisibleRow{
+        .primary_key = primary_key,
+        .position = row->position,
+        .encoded = row->encoded,
+    });
+  }
+  std::sort(visible.begin(), visible.end(),
+            [](const RealtimeVisibleRow& lhs,
+               const RealtimeVisibleRow& rhs) {
+              return lhs.primary_key < rhs.primary_key;
+            });
+  return visible;
 }
 
 Status RealtimeDeltaAtomicTable::ReserveSlotForTesting(

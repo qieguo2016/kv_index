@@ -3,7 +3,7 @@
 ## Metadata
 - Current Date: 2026-04-30
 - Last Restored: 2026-04-30
-- Active Task: W06 Artifact Format, Mmap Loading, And External AsyncLoad
+- Active Task: W07 Delta Compaction And Internal Full Rebase
 - Execution Mode: strict serial multi-agent
 - Branch: main
 
@@ -27,7 +27,7 @@
 | W04 | completed | W03 | 0 | docs/tasks/W04-realtime-delta.md |
 | W05 | completed | W04 | 0 | docs/tasks/W05-kafka-update-pipeline.md |
 | W06 | completed | W05 | 1 | docs/tasks/W06-artifact-async-load.md |
-| W07 | pending | W06 | 0 | docs/tasks/W07-compaction-full-rebase.md |
+| W07 | completed | W06 | 1 | docs/tasks/W07-compaction-full-rebase.md |
 | W08 | pending | W07 | 0 | docs/tasks/W08-observability-finalization.md |
 
 ## Completed Tasks
@@ -38,6 +38,7 @@
 - W04 Realtime Delta Module
 - W05 Kafka Update Pipeline
 - W06 Artifact Format, Mmap Loading, And External AsyncLoad
+- W07 Delta Compaction And Internal Full Rebase
 
 ## Blocked By Human
 - None.
@@ -79,7 +80,13 @@
 - 2026-04-30: W06 verify agent returned `fail` despite all gates passing. Blocking findings: AsyncLoad does not capture cutover safe high-watermarks after rebuild consumer startup, can skip catch-up when artifact checkpoint equals artifact high watermark, and can stop catch-up at the artifact high watermark instead of the observed post-start high watermark. Controller moved W06 to fix retry 1.
 - 2026-04-30: W06 fix retry 1 coding agent returned `DONE` with regressions for post-start safe high-watermark capture and catch-up-to-observed-watermark semantics. Controller moved W06 back to independent verification.
 - 2026-04-30: W06 verify retry 1 returned `pass` after confirming the prior safe-position/catch-up blockers are resolved and focused/aggregate gates plus `bazel build //...` passed. Controller marked W06 completed and authorized the W06 atomic commit.
+- 2026-04-30: W06 commit completed as `f76fb14`. Selected W07 as the next active task because its only dependency is W06.
+- 2026-04-30: W07 plan agent completed planning and updated the task document to `ready_for_impl`. Controller accepted the plan, authorized Bazel wiring and minimal internal W04-W06 seam extensions for sealed-row scanning, snapshot enumeration, generation routing, and async-load conflict checks, then moved W07 to implementation.
+- 2026-04-30: W07 coding agent returned `DONE` after implementing internal compaction/full rebase modules, realtime sealed boundary scanning, snapshot enumeration, compact/full cutover helpers, focused unit/integration tests, and aggregate gates. Controller moved W07 to independent verification.
+- 2026-04-30: W07 verify agent returned `fail` despite all gates passing. Blocking finding: full rebase can drop previous serving realtime rows because `BuildRebasedFullSnapshot` scans only compact/full and `FinishFullRebase` publishes only rebase realtime plus rebased full without proving previous realtime was compacted or caught up. Controller moved W07 to fix retry 1.
+- 2026-04-30: W07 fix retry 1 coding agent returned `DONE` after adding a fail-closed `FinishFullRebase` guard for non-empty previous realtime, regression coverage for previous realtime-only rows, and adjusted integration coverage. Controller moved W07 back to independent verification.
+- 2026-04-30: W07 verify retry 1 returned `pass` after confirming the previous-realtime data-loss blocker is resolved and focused/aggregate gates plus `bazel build //...` passed. Controller marked W07 completed and authorized the W07 atomic commit.
 
 ## Next Dispatch Decision
-- Dispatch W06 commit-only coding agent.
-- Required W06 commit output: stage the W06 implementation, tests, build wiring, and task/controller ledger changes; create one atomic commit with exactly one Codex trailer; report commit SHA and final status.
+- Dispatch W07 commit-only coding agent.
+- Required W07 commit output: stage the W07 implementation, tests, build wiring, and task/controller ledger changes; create one atomic commit with exactly one Codex trailer; report commit SHA and final status.

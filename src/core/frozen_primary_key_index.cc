@@ -461,6 +461,37 @@ StatusOr<std::optional<std::uint64_t>> FrozenPrimaryKeyIndexView::Lookup(
       "frozen primary-key index lookup exhausted every slot");
 }
 
+StatusOr<std::vector<FrozenPrimaryKeyIndexEntry>>
+FrozenPrimaryKeyIndexView::Entries() const {
+  if (metadata_.capacity == 0) {
+    return Status::InvalidArgument("frozen primary-key index view is invalid");
+  }
+  std::vector<FrozenPrimaryKeyIndexEntry> entries;
+  entries.reserve(static_cast<std::size_t>(metadata_.row_count));
+  const std::size_t control_offset =
+      static_cast<std::size_t>(metadata_.control_offset);
+  for (std::uint64_t slot = 0; slot < metadata_.capacity; ++slot) {
+    const auto control =
+        std::to_integer<std::uint8_t>(bytes_[control_offset + slot]);
+    if (control == kEmptyControl) {
+      continue;
+    }
+    auto key = ReadKey(slot);
+    if (!key.ok()) {
+      return key.status();
+    }
+    auto row_offset = ReadRowOffset(slot);
+    if (!row_offset.ok()) {
+      return row_offset.status();
+    }
+    entries.push_back(FrozenPrimaryKeyIndexEntry{
+        .primary_key = key.value(),
+        .row_offset = row_offset.value(),
+    });
+  }
+  return entries;
+}
+
 StatusOr<std::vector<std::byte>> BuildFrozenPrimaryKeyIndex(
     std::span<const FrozenPrimaryKeyIndexEntry> entries,
     FrozenPrimaryKeyIndexBuildOptions options) {

@@ -23,6 +23,17 @@ struct RealtimeRowRef {
   std::shared_ptr<const internal::EncodedRow> encoded;
   std::uint64_t row_slot_bytes = 0;
   std::uint64_t payload_pool_bytes = 0;
+  bool sealed_visible = false;
+};
+
+struct RealtimeDeltaBoundary {
+  std::size_t row_count = 0;
+};
+
+struct RealtimeVisibleRow {
+  std::uint64_t primary_key = 0;
+  SourcePosition position;
+  std::shared_ptr<const internal::EncodedRow> encoded;
 };
 
 class RealtimeAtomicHashMap {
@@ -38,6 +49,8 @@ class RealtimeAtomicHashMap {
   RealtimeAtomicHashMap& operator=(const RealtimeAtomicHashMap&) = delete;
 
   Status Publish(std::uint64_t primary_key, const RealtimeRowRef* row_ref);
+  StatusOr<bool> PublishAndReport(std::uint64_t primary_key,
+                                  const RealtimeRowRef* row_ref);
   StatusOr<std::optional<const RealtimeRowRef*>> Get(
       std::uint64_t primary_key) const;
 
@@ -64,7 +77,7 @@ class RealtimeAtomicHashMap {
 
   std::size_t ProbeIndex(std::uint64_t primary_key,
                          std::size_t probe) const noexcept;
-  Status PublishExisting(Slot* slot, const RealtimeRowRef* row_ref);
+  StatusOr<bool> PublishExisting(Slot* slot, const RealtimeRowRef* row_ref);
 
   std::unique_ptr<Slot[]> slots_;
   std::size_t capacity_ = 0;
@@ -105,7 +118,14 @@ class RealtimeDeltaAtomicTable {
                  internal::EncodedRow encoded);
   StatusOr<std::optional<Row>> Get(std::uint64_t primary_key) const;
 
+  RealtimeDeltaBoundary CaptureCompactionBoundary() const;
+  StatusOr<std::vector<RealtimeVisibleRow>> ScanVisibleRows(
+      RealtimeDeltaBoundary boundary) const;
+
   Status ReserveSlotForTesting(std::uint64_t primary_key);
+  const std::shared_ptr<const CompiledRowLayout>& layout() const noexcept {
+    return layout_;
+  }
   RealtimeDeltaStats stats() const;
 
  private:

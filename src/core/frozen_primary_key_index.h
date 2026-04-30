@@ -59,6 +59,7 @@ class FrozenPrimaryKeyIndexView {
 
   StatusOr<std::optional<std::uint64_t>> Lookup(
       std::uint64_t primary_key) const;
+  StatusOr<std::vector<FrozenPrimaryKeyIndexEntry>> Entries() const;
 
   const FrozenPrimaryKeyIndexMetadata& metadata() const noexcept {
     return metadata_;

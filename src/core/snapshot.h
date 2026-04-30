@@ -24,6 +24,11 @@ struct OwnedSnapshotRowPayload {
   std::vector<std::string> string_element_dictionary;
 };
 
+struct SnapshotRow {
+  std::uint64_t primary_key = 0;
+  internal::EncodedRow encoded;
+};
+
 class SnapshotBacking {
  public:
   virtual ~SnapshotBacking() = default;
@@ -35,6 +40,9 @@ class SnapshotBacking {
   virtual StatusOr<internal::EncodedRow> EncodedRowAt(
       std::uint64_t row_offset) const = 0;
 };
+
+StatusOr<std::vector<SnapshotRow>> EnumerateSnapshotRows(
+    const SnapshotBacking& backing);
 
 class OwnedSnapshotBacking final : public SnapshotBacking {
  public:
@@ -92,8 +100,12 @@ class FullSnapshotView {
   explicit FullSnapshotView(std::shared_ptr<const SnapshotBacking> backing);
 
   StatusOr<std::optional<Row>> Get(std::uint64_t primary_key) const;
+  const std::shared_ptr<const SnapshotBacking>& backing() const noexcept {
+    return backing_;
+  }
 
  private:
+  std::shared_ptr<const SnapshotBacking> backing_;
   ImmutableRowSnapshotView view_;
 };
 
@@ -103,8 +115,12 @@ class CompactDeltaSnapshot {
       std::shared_ptr<const OwnedSnapshotBacking> backing);
 
   StatusOr<std::optional<Row>> Get(std::uint64_t primary_key) const;
+  const std::shared_ptr<const OwnedSnapshotBacking>& backing() const noexcept {
+    return backing_;
+  }
 
  private:
+  std::shared_ptr<const OwnedSnapshotBacking> backing_;
   ImmutableRowSnapshotView view_;
 };
 

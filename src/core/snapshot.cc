@@ -72,6 +72,31 @@ StatusOr<internal::EncodedRow> OwnedSnapshotBacking::EncodedRowAt(
   };
 }
 
+StatusOr<std::vector<SnapshotRow>> EnumerateSnapshotRows(
+    const SnapshotBacking& backing) {
+  auto index = FrozenPrimaryKeyIndexView::Validate(backing.frozen_index_bytes());
+  if (!index.ok()) {
+    return index.status();
+  }
+  auto entries = index->Entries();
+  if (!entries.ok()) {
+    return entries.status();
+  }
+  std::vector<SnapshotRow> rows;
+  rows.reserve(entries->size());
+  for (const FrozenPrimaryKeyIndexEntry& entry : entries.value()) {
+    auto encoded = backing.EncodedRowAt(entry.row_offset);
+    if (!encoded.ok()) {
+      return encoded.status();
+    }
+    rows.push_back(SnapshotRow{
+        .primary_key = entry.primary_key,
+        .encoded = std::move(encoded).value(),
+    });
+  }
+  return rows;
+}
+
 ImmutableRowSnapshotView::ImmutableRowSnapshotView(
     std::shared_ptr<const SnapshotBacking> backing)
     : backing_(std::move(backing)), index_(ValidateBackingIndex(backing_)) {}
@@ -104,11 +129,11 @@ StatusOr<std::optional<Row>> ImmutableRowSnapshotView::Get(
 
 FullSnapshotView::FullSnapshotView(
     std::shared_ptr<const OwnedSnapshotBacking> backing)
-    : view_(std::move(backing)) {}
+    : backing_(std::move(backing)), view_(backing_) {}
 
 FullSnapshotView::FullSnapshotView(
     std::shared_ptr<const SnapshotBacking> backing)
-    : view_(std::move(backing)) {}
+    : backing_(std::move(backing)), view_(backing_) {}
 
 StatusOr<std::optional<Row>> FullSnapshotView::Get(
     std::uint64_t primary_key) const {
@@ -117,7 +142,7 @@ StatusOr<std::optional<Row>> FullSnapshotView::Get(
 
 CompactDeltaSnapshot::CompactDeltaSnapshot(
     std::shared_ptr<const OwnedSnapshotBacking> backing)
-    : view_(std::move(backing)) {}
+    : backing_(std::move(backing)), view_(backing_) {}
 
 StatusOr<std::optional<Row>> CompactDeltaSnapshot::Get(
     std::uint64_t primary_key) const {

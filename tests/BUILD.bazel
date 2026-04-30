@@ -62,8 +62,30 @@ cc_test(
 )
 
 cc_test(
+    name = "compaction_test",
+    srcs = ["unit/compaction_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
     name = "forward_index_unit_test",
     srcs = ["unit/forward_index_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
+    name = "full_rebase_test",
+    srcs = ["unit/full_rebase_test.cc"],
     size = "small",
     deps = [
         ":test_support",
@@ -234,13 +256,27 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "compaction_rebase_integration_test",
+    srcs = ["integration/compaction_rebase_integration_test.cc"],
+    size = "small",
+    tags = ["integration"],
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
 test_suite(
     name = "unit_tests",
     tests = [
         ":byte_io_test",
         ":async_load_test",
         ":artifact_format_test",
+        ":compaction_test",
         ":forward_index_unit_test",
+        ":full_rebase_test",
         ":frozen_primary_key_index_test",
         ":kafka_update_consumer_test",
         ":mmap_snapshot_backing_test",
@@ -265,7 +301,10 @@ test_suite(
 
 test_suite(
     name = "integration_tests",
-    tests = [":forward_index_integration_test"],
+    tests = [
+        ":compaction_rebase_integration_test",
+        ":forward_index_integration_test",
+    ],
 )
 
 test_suite(
@@ -274,7 +313,9 @@ test_suite(
         ":byte_io_test",
         ":async_load_test",
         ":artifact_format_test",
+        ":compaction_test",
         ":forward_index_unit_test",
+        ":full_rebase_test",
         ":frozen_primary_key_index_test",
         ":kafka_update_consumer_test",
         ":mmap_snapshot_backing_test",
@@ -289,6 +330,7 @@ test_suite(
         ":status_unit_test",
         ":update_applier_test",
         ":update_coordinator_test",
+        ":compaction_rebase_integration_test",
         ":forward_index_integration_test",
         ":kv_index_smoke_test",
     ],
