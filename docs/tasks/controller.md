@@ -3,7 +3,7 @@
 ## Metadata
 - Current Date: 2026-04-30
 - Last Restored: 2026-04-30
-- Active Task: none
+- Active Task: W05 Kafka Update Pipeline
 - Execution Mode: strict serial multi-agent
 - Branch: main
 
@@ -25,7 +25,7 @@
 | W02 | completed | W01 | 0 | docs/tasks/W02-immutable-snapshot.md |
 | W03 | completed | W02 | 0 | docs/tasks/W03-serving-read-path.md |
 | W04 | completed | W03 | 0 | docs/tasks/W04-realtime-delta.md |
-| W05 | pending | W04 | 0 | docs/tasks/W05-kafka-update-pipeline.md |
+| W05 | verifying | W04 | 0 | docs/tasks/W05-kafka-update-pipeline.md |
 | W06 | pending | W05 | 0 | docs/tasks/W06-artifact-async-load.md |
 | W07 | pending | W06 | 0 | docs/tasks/W07-compaction-full-rebase.md |
 | W08 | pending | W07 | 0 | docs/tasks/W08-observability-finalization.md |
@@ -63,7 +63,13 @@
 - 2026-04-30: W04 plan agent completed planning and identified required Bazel wiring scope. Controller authorized `BUILD.bazel` and `tests/BUILD.bazel` edits for W04 wiring only, then moved W04 to implementation.
 - 2026-04-30: W04 coding agent completed implementation with focused tests passing and documented risks around append-before-CAS unreachable rows and fixed-capacity linear probing. Controller moved W04 to independent verification with those as explicit review points.
 - 2026-04-30: W04 verify agent returned `pass` after focused tests, `unit_tests`, `all_tests`, and uncached `all_tests`. Controller accepted append-before-CAS unreachable rows and fixed-capacity linear probing as documented W04 tradeoffs and authorized the W04 commit.
+- 2026-04-30: W04 commit completed as `2e4521f`. Selected W05 as the next active task because its only dependency is W04.
+- 2026-04-30: W05 plan agent completed planning and identified required root BUILD and librdkafka dependency scope. Controller authorized minimal root `BUILD.bazel` W05 wiring, local-system `/usr/local` librdkafka binding without `MODULE.bazel` downloads, and single logical update topic validation without extending `SourcePosition`.
+- 2026-04-30: W05 coding agent completed fake-first consumer/applier/coordinator stages but returned `NEEDS_CONTEXT` when the authorized `/usr/local/lib/librdkafka.dylib` failed to link under `darwin_arm64` because it is `x86_64` only.
+- 2026-04-30: Controller installed/confirmed an `arm64` Homebrew `librdkafka` at `/opt/homebrew/opt/librdkafka` and authorized replacing the failed `/usr/local` binding path with `/opt/homebrew/opt/librdkafka` without modifying `MODULE.bazel`. Dispatching a continuation W05 coding agent with this narrower dependency-path fix scope.
+- 2026-04-30: W05 continuation coding agent returned `DONE_WITH_CONCERNS`: focused W05 tests, `unit_tests`, and `all_tests` passed with the Homebrew binding, but link steps warn that Homebrew `librdkafka.1.dylib` targets a newer macOS version than Bazel's `macOS-11.0` target. Controller moved W05 to independent verification with this warning as an explicit review point.
+- 2026-04-30: W05 verify agent returned `pass` after independent review and focused/aggregate Bazel gates. The Homebrew `librdkafka` newer-macOS warning is accepted as non-blocking for this local macOS 26.0.1 context, with deployment policy risk noted for older macOS support. Controller authorized the W05 atomic commit.
 
 ## Next Dispatch Decision
-- Dispatch W04 commit-only coding agent.
-- After the W04 commit succeeds, select W05 as the next active task because W04 will be complete and W05 depends only on W04.
+- Dispatch W05 commit-only coding agent.
+- Required W05 commit output: stage the W05 implementation, tests, and task/controller ledger changes; create one atomic commit with exactly one Codex trailer; report commit SHA and final status.

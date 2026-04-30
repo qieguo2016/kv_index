@@ -1,6 +1,7 @@
 #ifndef KV_INDEX_TYPES_H_
 #define KV_INDEX_TYPES_H_
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -66,6 +67,53 @@ struct KafkaConsumerConfig {
   std::string bootstrap_servers;
   std::string group_id;
   std::vector<std::string> topics;
+};
+
+struct KafkaPartition {
+  std::string topic;
+  std::int32_t partition = -1;
+};
+
+struct KafkaPosition {
+  KafkaPartition partition;
+  std::int64_t offset = -1;
+};
+
+// Kafka message metadata records the consumed message offset. W04 source
+// ordering uses that exact message offset.
+struct KafkaMessageMetadata {
+  KafkaPartition partition;
+  std::int64_t offset = -1;
+  std::string key;
+  std::int64_t timestamp_millis = 0;
+};
+
+struct KafkaUpsertMessage {
+  KafkaMessageMetadata metadata;
+  std::uint64_t primary_key = 0;
+  std::vector<std::byte> payload;
+};
+
+// Checkpoints store Kafka's commit offset: the next offset to consume for each
+// topic+partition. After processing message offset N, commit N+1.
+struct KafkaCheckpoint {
+  std::vector<KafkaPosition> next_offsets;
+};
+
+struct KafkaPartitionProgress {
+  KafkaPartition partition;
+  std::int64_t committed_next_offset = -1;
+  std::int64_t high_watermark = -1;
+  std::int64_t lag = -1;
+};
+
+struct KafkaProgress {
+  std::vector<KafkaPartitionProgress> partitions;
+};
+
+struct PollOptions {
+  std::int32_t timeout_ms = 100;
+  std::size_t max_messages = 1;
 };
 
 struct LoadRequest {

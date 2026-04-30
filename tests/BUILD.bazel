@@ -32,6 +32,17 @@ cc_test(
 )
 
 cc_test(
+    name = "kafka_update_consumer_test",
+    srcs = ["unit/kafka_update_consumer_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
     name = "frozen_primary_key_index_test",
     srcs = ["unit/frozen_primary_key_index_test.cc"],
     size = "small",
@@ -138,6 +149,28 @@ cc_test(
 )
 
 cc_test(
+    name = "update_applier_test",
+    srcs = ["unit/update_applier_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
+    name = "update_coordinator_test",
+    srcs = ["unit/update_coordinator_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
     name = "kv_index_smoke_test",
     srcs = ["smoke/kv_index_smoke_test.cc"],
     size = "small",
@@ -166,6 +199,7 @@ test_suite(
         ":byte_io_test",
         ":forward_index_unit_test",
         ":frozen_primary_key_index_test",
+        ":kafka_update_consumer_test",
         ":realtime_atomic_hash_map_test",
         ":realtime_delta_test",
         ":row_decoder_test",
@@ -175,6 +209,8 @@ test_suite(
         ":source_position_test",
         ":snapshot_test",
         ":status_unit_test",
+        ":update_applier_test",
+        ":update_coordinator_test",
     ],
 )
 
@@ -194,6 +230,7 @@ test_suite(
         ":byte_io_test",
         ":forward_index_unit_test",
         ":frozen_primary_key_index_test",
+        ":kafka_update_consumer_test",
         ":realtime_atomic_hash_map_test",
         ":realtime_delta_test",
         ":schema_test",
@@ -203,6 +240,8 @@ test_suite(
         ":source_position_test",
         ":snapshot_test",
         ":status_unit_test",
+        ":update_applier_test",
+        ":update_coordinator_test",
         ":forward_index_integration_test",
         ":kv_index_smoke_test",
     ],
