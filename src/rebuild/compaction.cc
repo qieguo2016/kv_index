@@ -4,7 +4,7 @@
 #include <unordered_set>
 #include <utility>
 
-namespace kv_index::internal::rebuild {
+namespace kv_index::rebuild {
 namespace {
 
 StatusOr<std::shared_ptr<const CompiledRowLayout>> ResolveLayout(
@@ -27,7 +27,7 @@ StatusOr<std::shared_ptr<const CompiledRowLayout>> ResolveLayout(
 Status AddRowIfNew(store::SnapshotBuilder* builder,
                    std::unordered_set<std::uint64_t>* seen,
                    std::uint64_t primary_key,
-                   internal::model::EncodedRow encoded) {
+                   model::EncodedRow encoded) {
   if (builder == nullptr || seen == nullptr) {
     return Status::InvalidArgument("compaction row sink is null");
   }
@@ -106,4 +106,4 @@ StatusOr<std::shared_ptr<const runtime::ShardState>> FinishDeltaCompaction(
       });
 }
 
-}  // namespace kv_index::internal::rebuild
+}  // namespace kv_index::rebuild

@@ -12,7 +12,7 @@
 #include "kv_index/schema.h"
 #include "kv_index/status.h"
 
-namespace kv_index::internal::artifact {
+namespace kv_index::artifact {
 
 inline constexpr std::uint64_t kArtifactMagic = 0x3149564b54524146ULL;
 inline constexpr std::uint32_t kArtifactFormatVersion = 1;
@@ -79,6 +79,6 @@ StatusOr<ParsedArtifact> ParseArtifact(
     std::span<const std::byte> bytes,
     ArtifactValidationOptions options = {});
 
-}  // namespace kv_index::internal::artifact
+}  // namespace kv_index::artifact
 
 #endif  // KV_INDEX_SRC_ARTIFACT_ARTIFACT_FORMAT_H_

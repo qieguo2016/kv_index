@@ -11,7 +11,7 @@
 #include "src/store/realtime_delta.h"
 #include "src/runtime/shard_state.h"
 
-namespace kv_index::internal::rebuild {
+namespace kv_index::rebuild {
 
 using PublishShardFn = std::function<Status(
     std::uint32_t, std::shared_ptr<const runtime::ShardState>)>;
@@ -57,6 +57,6 @@ Status RunExternalArtifactLoad(const LoadRequest& request, LoadId id,
                                AsyncLoadCallbacks callbacks,
                                LoadState* state);
 
-}  // namespace kv_index::internal::rebuild
+}  // namespace kv_index::rebuild
 
 #endif  // KV_INDEX_SRC_REBUILD_ASYNC_LOAD_H_

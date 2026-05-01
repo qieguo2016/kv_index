@@ -25,9 +25,9 @@ using kv_index::RuntimeSchema;
 using kv_index::SourcePosition;
 using kv_index::StatusCode;
 using kv_index::ThresholdConfig;
-using kv_index::internal::store::RealtimeDeltaAtomicTable;
-using kv_index::internal::store::ShouldCompactRealtimeDelta;
-namespace storage = kv_index::internal::model;
+using kv_index::store::RealtimeDeltaAtomicTable;
+using kv_index::store::ShouldCompactRealtimeDelta;
+namespace storage = kv_index::model;
 
 FieldSpec Scalar(kv_index::FieldId field_id, std::string name, FieldType type,
                  bool nullable = true) {

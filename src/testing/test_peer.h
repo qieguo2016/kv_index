@@ -10,7 +10,7 @@
 #include "src/runtime/shard_directory.h"
 #include "src/runtime/shard_state.h"
 
-namespace kv_index::internal::testing {
+namespace kv_index::testing {
 
 class ForwardIndexTestPeer {
  public:
@@ -41,6 +41,6 @@ class ForwardIndexTestPeer {
   }
 };
 
-}  // namespace kv_index::internal::testing
+}  // namespace kv_index::testing
 
 #endif  // KV_INDEX_SRC_TESTING_TEST_PEER_H_

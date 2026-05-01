@@ -30,14 +30,14 @@ using kv_index::FieldType;
 using kv_index::ForwardIndex;
 using kv_index::ForwardIndexOptions;
 using kv_index::RuntimeSchema;
-using kv_index::internal::store::CompactDeltaSnapshot;
-using kv_index::internal::testing::ForwardIndexTestPeer;
-using kv_index::internal::store::FullSnapshotView;
-using kv_index::internal::store::OwnedSnapshotBacking;
-using kv_index::internal::store::OwnedSnapshotRowPayload;
-using kv_index::internal::runtime::ShardState;
-using kv_index::internal::store::SnapshotBuilder;
-namespace storage = kv_index::internal::model;
+using kv_index::store::CompactDeltaSnapshot;
+using kv_index::testing::ForwardIndexTestPeer;
+using kv_index::store::FullSnapshotView;
+using kv_index::store::OwnedSnapshotBacking;
+using kv_index::store::OwnedSnapshotRowPayload;
+using kv_index::runtime::ShardState;
+using kv_index::store::SnapshotBuilder;
+namespace storage = kv_index::model;
 
 FieldSpec Scalar(kv_index::FieldId field_id, std::string name,
                  FieldType type) {
@@ -94,11 +94,11 @@ std::shared_ptr<const OwnedSnapshotBacking> BuildSnapshot(
 std::shared_ptr<const OwnedSnapshotBacking> BuildCorruptSnapshotForKey(
     std::shared_ptr<const CompiledRowLayout> layout,
     std::uint64_t primary_key) {
-  const std::array<kv_index::internal::store::FrozenPrimaryKeyIndexEntry, 1> entries = {{
+  const std::array<kv_index::store::FrozenPrimaryKeyIndexEntry, 1> entries = {{
       {.primary_key = primary_key,
        .row_offset = static_cast<std::uint64_t>(layout->row_slot_size() * 4)},
   }};
-  auto index_bytes = kv_index::internal::store::BuildFrozenPrimaryKeyIndex(entries);
+  auto index_bytes = kv_index::store::BuildFrozenPrimaryKeyIndex(entries);
   KV_INDEX_CHECK(index_bytes.ok());
 
   std::vector<std::byte> row_slot_bytes(layout->row_slot_size());
@@ -187,7 +187,7 @@ void StableHashGoldenValuesRemainStable() {
                     10858953248184931039ULL);
   KV_INDEX_CHECK_EQ(kv_index::StableHash64(42, 17, 1),
                     13083006257041843452ULL);
-  KV_INDEX_CHECK_EQ(kv_index::internal::base::StableHash64(42, 17, 1),
+  KV_INDEX_CHECK_EQ(kv_index::base::StableHash64(42, 17, 1),
                     kv_index::StableHash64(42, 17, 1));
 }
 

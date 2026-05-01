@@ -22,7 +22,7 @@ using kv_index::MakeFieldAccessor;
 using kv_index::MakeListFieldAccessor;
 using kv_index::RuntimeSchema;
 using kv_index::Row;
-namespace storage = kv_index::internal::model;
+namespace storage = kv_index::model;
 
 FieldSpec Scalar(kv_index::FieldId field_id, std::string name,
                  FieldType type) {

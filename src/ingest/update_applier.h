@@ -13,7 +13,7 @@
 #include "kv_index/types.h"
 #include "src/store/realtime_delta.h"
 
-namespace kv_index::internal::ingest {
+namespace kv_index::ingest {
 
 enum class UpdateGenerationRole : std::uint8_t {
   kActive = 1,
@@ -48,6 +48,6 @@ class UpdateApplier {
   UpdateApplierOptions options_;
 };
 
-}  // namespace kv_index::internal::ingest
+}  // namespace kv_index::ingest
 
 #endif  // KV_INDEX_SRC_INGEST_UPDATE_APPLIER_H_

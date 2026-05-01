@@ -28,16 +28,16 @@ using kv_index::FieldType;
 using kv_index::RuntimeSchema;
 using kv_index::Row;
 using kv_index::StatusCode;
-using kv_index::internal::store::BuildFrozenPrimaryKeyIndex;
-using kv_index::internal::store::CompactDeltaSnapshot;
-using kv_index::internal::store::FrozenPrimaryKeyIndexEntry;
-using kv_index::internal::store::FullSnapshotView;
-using kv_index::internal::store::ImmutableRowSnapshotView;
-using kv_index::internal::store::OwnedSnapshotBacking;
-using kv_index::internal::store::OwnedSnapshotRowPayload;
-using kv_index::internal::store::SnapshotBuildOptions;
-using kv_index::internal::store::SnapshotBuilder;
-namespace storage = kv_index::internal::model;
+using kv_index::store::BuildFrozenPrimaryKeyIndex;
+using kv_index::store::CompactDeltaSnapshot;
+using kv_index::store::FrozenPrimaryKeyIndexEntry;
+using kv_index::store::FullSnapshotView;
+using kv_index::store::ImmutableRowSnapshotView;
+using kv_index::store::OwnedSnapshotBacking;
+using kv_index::store::OwnedSnapshotRowPayload;
+using kv_index::store::SnapshotBuildOptions;
+using kv_index::store::SnapshotBuilder;
+namespace storage = kv_index::model;
 
 FieldSpec Scalar(kv_index::FieldId field_id, std::string name,
                  FieldType type) {

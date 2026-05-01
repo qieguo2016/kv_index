@@ -40,25 +40,25 @@ using kv_index::RuntimeSchema;
 using kv_index::SourcePosition;
 using kv_index::Status;
 using kv_index::StatusOr;
-using kv_index::internal::rebuild::AsyncCatchUpRequest;
-using kv_index::internal::rebuild::AsyncCatchUpRunner;
-using kv_index::internal::rebuild::AsyncLoadCallbacks;
-using kv_index::internal::artifact::ArtifactSectionType;
-using kv_index::internal::store::CompactDeltaSnapshot;
-using kv_index::internal::testing::ForwardIndexTestPeer;
-using kv_index::internal::store::FullSnapshotView;
-using kv_index::internal::artifact::Fnv1a64;
-using kv_index::internal::store::OwnedSnapshotBacking;
-using kv_index::internal::store::RealtimeDeltaAtomicTable;
-using kv_index::internal::rebuild::RunExternalArtifactLoad;
-using kv_index::internal::rebuild::SetAsyncCatchUpRunnerFactoryForTesting;
-using kv_index::internal::runtime::ShardState;
-using kv_index::internal::store::SnapshotBuilder;
+using kv_index::rebuild::AsyncCatchUpRequest;
+using kv_index::rebuild::AsyncCatchUpRunner;
+using kv_index::rebuild::AsyncLoadCallbacks;
+using kv_index::artifact::ArtifactSectionType;
+using kv_index::store::CompactDeltaSnapshot;
+using kv_index::testing::ForwardIndexTestPeer;
+using kv_index::store::FullSnapshotView;
+using kv_index::artifact::Fnv1a64;
+using kv_index::store::OwnedSnapshotBacking;
+using kv_index::store::RealtimeDeltaAtomicTable;
+using kv_index::rebuild::RunExternalArtifactLoad;
+using kv_index::rebuild::SetAsyncCatchUpRunnerFactoryForTesting;
+using kv_index::runtime::ShardState;
+using kv_index::store::SnapshotBuilder;
 using kv_index::test_support::ArtifactShardSpec;
 using kv_index::test_support::TestArtifactSpec;
 using kv_index::test_support::TestSourceProgress;
 using kv_index::test_support::WriteTestArtifact;
-namespace storage = kv_index::internal::model;
+namespace storage = kv_index::model;
 
 constexpr std::size_t kArtifactSectionCountOffset = 20;
 constexpr std::size_t kArtifactEntryTypeOffset = 0;
@@ -210,7 +210,7 @@ class ScopedNoopCatchUpFactory {
   }
 
  private:
-  kv_index::internal::rebuild::AsyncCatchUpRunnerFactory previous_;
+  kv_index::rebuild::AsyncCatchUpRunnerFactory previous_;
 };
 
 void WaitForTerminalState(const ForwardIndex& index, kv_index::LoadId load_id) {
@@ -287,7 +287,7 @@ Status MakeShardRowSlotsMisaligned(const std::string& path,
     return bytes_or.status();
   }
   std::vector<std::byte> bytes = std::move(bytes_or).value();
-  auto section_count = kv_index::internal::base::ReadLittleEndian<std::uint32_t>(
+  auto section_count = kv_index::base::ReadLittleEndian<std::uint32_t>(
       bytes, kArtifactSectionCountOffset);
   if (!section_count.ok()) {
     return section_count.status();
@@ -298,20 +298,20 @@ Status MakeShardRowSlotsMisaligned(const std::string& path,
   std::uint64_t section_length = 0;
   for (std::uint32_t i = 0; i < *section_count; ++i) {
     const std::size_t entry_offset =
-        kv_index::internal::artifact::kArtifactHeaderSize +
-        static_cast<std::size_t>(i) * kv_index::internal::artifact::kArtifactSectionEntrySize;
-    auto type = kv_index::internal::base::ReadLittleEndian<std::uint32_t>(
+        kv_index::artifact::kArtifactHeaderSize +
+        static_cast<std::size_t>(i) * kv_index::artifact::kArtifactSectionEntrySize;
+    auto type = kv_index::base::ReadLittleEndian<std::uint32_t>(
         bytes, entry_offset + kArtifactEntryTypeOffset);
-    auto entry_shard = kv_index::internal::base::ReadLittleEndian<std::uint32_t>(
+    auto entry_shard = kv_index::base::ReadLittleEndian<std::uint32_t>(
         bytes, entry_offset + kArtifactEntryShardIdOffset);
     if (!type.ok() || !entry_shard.ok()) {
       return Status::InvalidArgument("artifact section entry is truncated");
     }
     if (*type == static_cast<std::uint32_t>(ArtifactSectionType::kRowSlots) &&
         *entry_shard == shard_id) {
-      auto offset = kv_index::internal::base::ReadLittleEndian<std::uint64_t>(
+      auto offset = kv_index::base::ReadLittleEndian<std::uint64_t>(
           bytes, entry_offset + kArtifactEntryFileOffsetOffset);
-      auto length = kv_index::internal::base::ReadLittleEndian<std::uint64_t>(
+      auto length = kv_index::base::ReadLittleEndian<std::uint64_t>(
           bytes, entry_offset + kArtifactEntryLengthOffset);
       if (!offset.ok() || !length.ok()) {
         return Status::InvalidArgument("artifact row-slot entry is truncated");
@@ -335,7 +335,7 @@ Status MakeShardRowSlotsMisaligned(const std::string& path,
                std::byte{0x7f});
 
   const std::uint64_t new_length = section_length + 1;
-  if (const Status status = kv_index::internal::base::WriteLittleEndian<std::uint64_t>(
+  if (const Status status = kv_index::base::WriteLittleEndian<std::uint64_t>(
           new_length, std::span<std::byte>(bytes),
           *target_entry + kArtifactEntryLengthOffset);
       !status.ok()) {
@@ -343,7 +343,7 @@ Status MakeShardRowSlotsMisaligned(const std::string& path,
   }
   const std::uint64_t new_checksum = Fnv1a64(std::span<const std::byte>(
       bytes.data() + section_offset, static_cast<std::size_t>(new_length)));
-  if (const Status status = kv_index::internal::base::WriteLittleEndian<std::uint64_t>(
+  if (const Status status = kv_index::base::WriteLittleEndian<std::uint64_t>(
           new_checksum, std::span<std::byte>(bytes),
           *target_entry + kArtifactEntryChecksumOffset);
       !status.ok()) {
@@ -352,18 +352,18 @@ Status MakeShardRowSlotsMisaligned(const std::string& path,
 
   for (std::uint32_t i = 0; i < *section_count; ++i) {
     const std::size_t entry_offset =
-        kv_index::internal::artifact::kArtifactHeaderSize +
-        static_cast<std::size_t>(i) * kv_index::internal::artifact::kArtifactSectionEntrySize;
+        kv_index::artifact::kArtifactHeaderSize +
+        static_cast<std::size_t>(i) * kv_index::artifact::kArtifactSectionEntrySize;
     if (entry_offset == *target_entry) {
       continue;
     }
-    auto offset = kv_index::internal::base::ReadLittleEndian<std::uint64_t>(
+    auto offset = kv_index::base::ReadLittleEndian<std::uint64_t>(
         bytes, entry_offset + kArtifactEntryFileOffsetOffset);
     if (!offset.ok()) {
       return offset.status();
     }
     if (*offset >= insert_pos) {
-      if (const Status status = kv_index::internal::base::WriteLittleEndian<std::uint64_t>(
+      if (const Status status = kv_index::base::WriteLittleEndian<std::uint64_t>(
               *offset + 1, std::span<std::byte>(bytes),
               entry_offset + kArtifactEntryFileOffsetOffset);
           !status.ok()) {

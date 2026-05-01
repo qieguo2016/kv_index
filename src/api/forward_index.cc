@@ -62,7 +62,7 @@ ForwardIndex::ForwardIndex(const ForwardIndexOptions& options)
         "ForwardIndexOptions::shard_count must be a non-zero power of two");
   }
   shard_directory_ =
-      std::make_unique<internal::runtime::ShardDirectory>(
+      std::make_unique<runtime::ShardDirectory>(
           options_.shard_count);
 }
 
@@ -84,7 +84,7 @@ ForwardIndex::~ForwardIndex() {
 
 std::uint32_t ForwardIndex::ShardFor(std::uint64_t primary_key) const noexcept {
   return static_cast<std::uint32_t>(
-      internal::base::StableHash64(primary_key, options_.hash_seed,
+      base::StableHash64(primary_key, options_.hash_seed,
                                    options_.hash_version) &
       (static_cast<std::uint64_t>(options_.shard_count) - 1ULL));
 }
@@ -179,12 +179,12 @@ LoadId ForwardIndex::LoadAsync(const LoadRequest& request) {
   load_cancellations_.emplace(id, cancellation);
   load_workers_.emplace_back([this, request, id, cancellation] {
     LoadState state;
-    (void)internal::rebuild::RunExternalArtifactLoad(
+    (void)rebuild::RunExternalArtifactLoad(
         request, id, options_,
-        internal::rebuild::AsyncLoadCallbacks{
+        rebuild::AsyncLoadCallbacks{
             .publish_shard =
                 [this](std::uint32_t shard_id,
-                       std::shared_ptr<const internal::runtime::ShardState>
+                       std::shared_ptr<const runtime::ShardState>
                            state) {
                   return shard_directory_->Publish(shard_id, std::move(state));
                 },

@@ -8,7 +8,7 @@
 #include "src/ingest/kafka_update_consumer.h"
 #include "src/ingest/update_applier.h"
 
-namespace kv_index::internal::ingest {
+namespace kv_index::ingest {
 
 struct UpdateCoordinatorOptions {
   std::string logical_topic;
@@ -28,6 +28,6 @@ class UpdateCoordinator {
   UpdateCoordinatorOptions options_;
 };
 
-}  // namespace kv_index::internal::ingest
+}  // namespace kv_index::ingest
 
 #endif  // KV_INDEX_SRC_INGEST_UPDATE_COORDINATOR_H_

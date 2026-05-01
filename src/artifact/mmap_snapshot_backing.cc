@@ -16,10 +16,10 @@
 
 #include "src/base/byte_io.h"
 
-namespace kv_index::internal::artifact {
+namespace kv_index::artifact {
 namespace {
 
-using kv_index::internal::base::ReadLittleEndian;
+using kv_index::base::ReadLittleEndian;
 
 StatusOr<std::string> ResolveLocalPath(const std::string& artifact_uri) {
   const std::string file_prefix = "file://";
@@ -342,7 +342,7 @@ StatusOr<std::shared_ptr<MmapSnapshotBacking>> MmapSnapshotBacking::LoadShard(
       *row_slots, *row_payloads, std::move(prewarm_sections)));
 }
 
-StatusOr<internal::model::EncodedRow> MmapSnapshotBacking::EncodedRowAt(
+StatusOr<model::EncodedRow> MmapSnapshotBacking::EncodedRowAt(
     std::uint64_t row_offset) const {
   if (layout() == nullptr) {
     return Status::FailedPrecondition("mmap snapshot has no row layout");
@@ -366,7 +366,7 @@ StatusOr<internal::model::EncodedRow> MmapSnapshotBacking::EncodedRowAt(
   if (!payload.ok()) {
     return payload.status();
   }
-  return internal::model::EncodedRow{
+  return model::EncodedRow{
       .schema_version = layout()->schema_version(),
       .layout_fingerprint = layout()->layout_fingerprint(),
       .row_slot = std::vector<std::byte>(row_slot_bytes_.begin() + offset,
@@ -391,4 +391,4 @@ Status MmapSnapshotBacking::Prewarm() {
   return Status::Ok();
 }
 
-}  // namespace kv_index::internal::artifact
+}  // namespace kv_index::artifact

@@ -17,7 +17,7 @@ bool HasBytes(std::size_t size, std::size_t offset, std::size_t byte_count) {
   return offset <= size && size - offset >= byte_count;
 }
 
-bool FieldPresent(const FieldLayout& field, const internal::model::EncodedRow& row) {
+bool FieldPresent(const FieldLayout& field, const model::EncodedRow& row) {
   const std::size_t byte_index = field.presence_bit_index / 8U;
   const std::size_t bit_index = field.presence_bit_index % 8U;
   if (byte_index >= row.row_slot.size()) {
@@ -30,7 +30,7 @@ bool FieldPresent(const FieldLayout& field, const internal::model::EncodedRow& r
 
 Status ValidateAccessor(const Row::AccessorMetadata* accessor,
                         const FieldLayout& field,
-                        const internal::model::EncodedRow& row,
+                        const model::EncodedRow& row,
                         const CompiledRowLayout& layout,
                         FieldType expected_type, bool expected_list) {
   if (accessor == nullptr) {
@@ -53,7 +53,7 @@ Status ValidateAccessor(const Row::AccessorMetadata* accessor,
 
 StatusOr<const FieldLayout*> ResolveField(
     const std::shared_ptr<const CompiledRowLayout>& layout,
-    const std::shared_ptr<const internal::model::EncodedRow>& row, FieldId field_id,
+    const std::shared_ptr<const model::EncodedRow>& row, FieldId field_id,
     FieldType expected_type, bool expected_list,
     const Row::AccessorMetadata* accessor) {
   if (layout == nullptr || row == nullptr) {
@@ -95,16 +95,16 @@ StatusOr<const FieldLayout*> ResolveField(
   return field;
 }
 
-StatusOr<internal::base::ValueRef16> ReadRef(const FieldLayout& field,
-                                       const internal::model::EncodedRow& row) {
+StatusOr<base::ValueRef16> ReadRef(const FieldLayout& field,
+                                       const model::EncodedRow& row) {
   if (!HasBytes(row.row_slot.size(), field.slot_offset, 16)) {
     return Status::InvalidArgument("value ref is out of row-slot bounds");
   }
-  return internal::base::DecodeValueRef16(std::span<const std::byte>(row.row_slot),
+  return base::DecodeValueRef16(std::span<const std::byte>(row.row_slot),
                                     field.slot_offset);
 }
 
-Status ValidateRefBounds(const internal::base::ValueRef16& ref,
+Status ValidateRefBounds(const base::ValueRef16& ref,
                          std::size_t payload_size) {
   if (ref.offset > payload_size) {
     return Status::InvalidArgument("value ref offset is out of bounds");
@@ -179,7 +179,7 @@ StatusOr<std::vector<T>> DecodeScalarListBytes(
   for (std::uint32_t i = 0; i < element_count; ++i) {
     if constexpr (std::same_as<T, bool>) {
       auto value =
-          internal::base::ReadLittleEndian<std::uint8_t>(bytes, i * width);
+          base::ReadLittleEndian<std::uint8_t>(bytes, i * width);
       if (!value.ok()) {
         return value.status();
       }
@@ -188,7 +188,7 @@ StatusOr<std::vector<T>> DecodeScalarListBytes(
       }
       values.push_back(value.value() != 0);
     } else {
-      auto value = internal::base::ReadLittleEndian<T>(bytes, i * width);
+      auto value = base::ReadLittleEndian<T>(bytes, i * width);
       if (!value.ok()) {
         return value.status();
       }
@@ -244,7 +244,7 @@ StatusOr<Row::ListValue> DecodeScalarListByType(
 }
 
 StatusOr<Row::ListValue> DecodeArenaStringList(
-    const internal::base::ValueRef16& ref, const internal::model::EncodedRow& row) {
+    const base::ValueRef16& ref, const model::EncodedRow& row) {
   const std::size_t ref_bytes =
       static_cast<std::size_t>(ref.element_count_or_flags) * 16U;
   if (ref.byte_length != ref_bytes) {
@@ -258,7 +258,7 @@ StatusOr<Row::ListValue> DecodeArenaStringList(
   std::vector<std::string> values;
   values.reserve(ref.element_count_or_flags);
   for (std::uint32_t i = 0; i < ref.element_count_or_flags; ++i) {
-    auto element_ref = internal::base::DecodeValueRef16(
+    auto element_ref = base::DecodeValueRef16(
         std::span<const std::byte>(row.arena),
         static_cast<std::size_t>(ref.offset) + i * 16U);
     if (!element_ref.ok()) {
@@ -277,7 +277,7 @@ StatusOr<Row::ListValue> DecodeArenaStringList(
 
 }  // namespace
 
-namespace internal::model {
+namespace model {
 
 EncodedRow CreateEncodedRow(const CompiledRowLayout& layout) {
   return EncodedRow{
@@ -438,10 +438,10 @@ StatusOr<Row> MaterializeRow(std::shared_ptr<const CompiledRowLayout> layout,
   return Row(std::move(layout), std::move(owned));
 }
 
-}  // namespace internal::model
+}  // namespace model
 
 Row::Row(std::shared_ptr<const CompiledRowLayout> layout,
-         std::shared_ptr<const internal::model::EncodedRow> encoded)
+         std::shared_ptr<const model::EncodedRow> encoded)
     : layout_(std::move(layout)), encoded_(std::move(encoded)) {}
 
 bool Row::Has(FieldId field_id) const noexcept {
@@ -498,7 +498,7 @@ StatusOr<Row::ScalarValue> Row::ReadScalarValue(
 
   switch (field.type) {
     case FieldType::kInt8: {
-      auto value = internal::base::ReadLittleEndian<std::int8_t>(
+      auto value = base::ReadLittleEndian<std::int8_t>(
           std::span<const std::byte>(encoded_->row_slot), field.slot_offset);
       if (!value.ok()) {
         return value.status();
@@ -506,7 +506,7 @@ StatusOr<Row::ScalarValue> Row::ReadScalarValue(
       return value.value();
     }
     case FieldType::kInt32: {
-      auto value = internal::base::ReadLittleEndian<std::int32_t>(
+      auto value = base::ReadLittleEndian<std::int32_t>(
           std::span<const std::byte>(encoded_->row_slot), field.slot_offset);
       if (!value.ok()) {
         return value.status();
@@ -514,7 +514,7 @@ StatusOr<Row::ScalarValue> Row::ReadScalarValue(
       return value.value();
     }
     case FieldType::kInt64: {
-      auto value = internal::base::ReadLittleEndian<std::int64_t>(
+      auto value = base::ReadLittleEndian<std::int64_t>(
           std::span<const std::byte>(encoded_->row_slot), field.slot_offset);
       if (!value.ok()) {
         return value.status();
@@ -522,7 +522,7 @@ StatusOr<Row::ScalarValue> Row::ReadScalarValue(
       return value.value();
     }
     case FieldType::kUInt64: {
-      auto value = internal::base::ReadLittleEndian<std::uint64_t>(
+      auto value = base::ReadLittleEndian<std::uint64_t>(
           std::span<const std::byte>(encoded_->row_slot), field.slot_offset);
       if (!value.ok()) {
         return value.status();
@@ -530,7 +530,7 @@ StatusOr<Row::ScalarValue> Row::ReadScalarValue(
       return value.value();
     }
     case FieldType::kBool: {
-      auto value = internal::base::ReadLittleEndian<std::uint8_t>(
+      auto value = base::ReadLittleEndian<std::uint8_t>(
           std::span<const std::byte>(encoded_->row_slot), field.slot_offset);
       if (!value.ok()) {
         return value.status();
@@ -619,7 +619,7 @@ StatusOr<Row::ListValue> Row::ReadListValue(
     std::vector<std::string> values;
     values.reserve(ref->element_count_or_flags);
     for (std::uint32_t i = 0; i < ref->element_count_or_flags; ++i) {
-      auto dictionary_id = internal::base::ReadLittleEndian<std::uint32_t>(
+      auto dictionary_id = base::ReadLittleEndian<std::uint32_t>(
           std::span<const std::byte>(encoded_->arena),
           static_cast<std::size_t>(ref->offset) + i * sizeof(std::uint32_t));
       if (!dictionary_id.ok()) {

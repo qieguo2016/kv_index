@@ -16,16 +16,16 @@
 namespace kv_index::test_support {
 namespace {
 
-using kv_index::internal::artifact::ArtifactSection;
-using kv_index::internal::artifact::ArtifactSectionType;
-using kv_index::internal::artifact::Fnv1a64;
-using kv_index::internal::artifact::kArtifactFormatVersion;
-using kv_index::internal::artifact::kArtifactGlobalShardId;
-using kv_index::internal::artifact::kArtifactHeaderSize;
-using kv_index::internal::artifact::kArtifactMagic;
-using kv_index::internal::artifact::kArtifactSectionEntrySize;
-using kv_index::internal::base::WriteLittleEndian;
-using kv_index::internal::base::ReadLittleEndian;
+using kv_index::artifact::ArtifactSection;
+using kv_index::artifact::ArtifactSectionType;
+using kv_index::artifact::Fnv1a64;
+using kv_index::artifact::kArtifactFormatVersion;
+using kv_index::artifact::kArtifactGlobalShardId;
+using kv_index::artifact::kArtifactHeaderSize;
+using kv_index::artifact::kArtifactMagic;
+using kv_index::artifact::kArtifactSectionEntrySize;
+using kv_index::base::WriteLittleEndian;
+using kv_index::base::ReadLittleEndian;
 
 constexpr std::size_t kMagicOffset = 0;
 constexpr std::size_t kVersionOffset = 8;
@@ -203,7 +203,7 @@ Status AppendStringList(std::vector<std::byte>* bytes,
 }
 
 StatusOr<std::vector<std::byte>> SerializeRowPayloads(
-    const std::vector<internal::store::OwnedSnapshotRowPayload>& payloads) {
+    const std::vector<store::OwnedSnapshotRowPayload>& payloads) {
   std::vector<std::byte> bytes;
   if (payloads.size() > UINT64_MAX) {
     return Status::InvalidArgument("too many payloads");
@@ -213,7 +213,7 @@ StatusOr<std::vector<std::byte>> SerializeRowPayloads(
       !status.ok()) {
     return status;
   }
-  for (const internal::store::OwnedSnapshotRowPayload& payload : payloads) {
+  for (const store::OwnedSnapshotRowPayload& payload : payloads) {
     if (const Status status = AppendBlob(
             &bytes, std::span<const std::byte>(payload.arena.data(),
                                                payload.arena.size()));
@@ -280,10 +280,10 @@ Status AddSection(std::vector<std::byte>* file,
   return Status::Ok();
 }
 
-StatusOr<std::shared_ptr<const internal::store::OwnedSnapshotBacking>> BuildShardSnapshot(
+StatusOr<std::shared_ptr<const store::OwnedSnapshotBacking>> BuildShardSnapshot(
     const TestArtifactSpec& spec, const ArtifactShardSpec& shard) {
-  internal::store::SnapshotBuilder builder(
-      spec.layout, internal::store::SnapshotBuildOptions{.hash_seed = spec.hash_seed,
+  store::SnapshotBuilder builder(
+      spec.layout, store::SnapshotBuildOptions{.hash_seed = spec.hash_seed,
                                               .hash_version = spec.hash_version});
   for (const TestArtifactRow& row : shard.rows) {
     if (const Status status = builder.AddRow(row.primary_key, row.encoded);
@@ -409,7 +409,7 @@ Status WriteTestArtifact(const std::string& path, const TestArtifactSpec& spec) 
     return status;
   }
   if (const Status status = WriteLittleEndian<std::uint32_t>(
-          static_cast<std::uint32_t>(internal::artifact::ArtifactChecksumAlgorithm::kFnv1a64),
+          static_cast<std::uint32_t>(artifact::ArtifactChecksumAlgorithm::kFnv1a64),
           std::span<std::byte>(file), kChecksumAlgorithmOffset);
       !status.ok()) {
     return status;

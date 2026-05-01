@@ -11,7 +11,7 @@
 #include "src/store/realtime_delta.h"
 #include "src/store/snapshot.h"
 
-namespace kv_index::internal::runtime {
+namespace kv_index::runtime {
 
 class ShardState {
  public:
@@ -50,6 +50,6 @@ class ShardState {
   std::optional<store::FullSnapshotView> full_snapshot_;
 };
 
-}  // namespace kv_index::internal::runtime
+}  // namespace kv_index::runtime
 
 #endif  // KV_INDEX_SRC_RUNTIME_SHARD_STATE_H_

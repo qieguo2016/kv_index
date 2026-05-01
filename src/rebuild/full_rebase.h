@@ -10,7 +10,7 @@
 #include "src/store/snapshot.h"
 #include "src/store/snapshot_builder.h"
 
-namespace kv_index::internal::rebuild {
+namespace kv_index::rebuild {
 
 struct FullRebaseBuildRequest {
   const runtime::ShardState& state;
@@ -31,6 +31,6 @@ StatusOr<std::shared_ptr<const store::OwnedSnapshotBacking>> BuildRebasedFullSna
 StatusOr<std::shared_ptr<const runtime::ShardState>> FinishFullRebase(
     FinishFullRebaseRequest request);
 
-}  // namespace kv_index::internal::rebuild
+}  // namespace kv_index::rebuild
 
 #endif  // KV_INDEX_SRC_REBUILD_FULL_REBASE_H_

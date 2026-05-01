@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-namespace kv_index::internal::store {
+namespace kv_index::store {
 
 SnapshotBuilder::SnapshotBuilder(
     std::shared_ptr<const CompiledRowLayout> layout,
@@ -17,7 +17,7 @@ SnapshotBuilder::SnapshotBuilder(
     : layout_(std::move(layout)), options_(options) {}
 
 Status SnapshotBuilder::AddRow(std::uint64_t primary_key,
-                               internal::model::EncodedRow encoded) {
+                               model::EncodedRow encoded) {
   if (layout_ == nullptr) {
     return Status::FailedPrecondition("snapshot builder has no row layout");
   }
@@ -82,4 +82,4 @@ StatusOr<std::shared_ptr<const OwnedSnapshotBacking>> SnapshotBuilder::Seal() {
   return backing;
 }
 
-}  // namespace kv_index::internal::store
+}  // namespace kv_index::store

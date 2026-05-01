@@ -19,9 +19,9 @@
 
 namespace kv_index {
 
-namespace internal::model {
+namespace model {
 struct EncodedRow;
-}  // namespace internal::model
+}  // namespace model
 
 template <typename T>
 struct FieldTypeTraits;
@@ -178,7 +178,7 @@ class Row {
 
   Row() = default;
   Row(std::shared_ptr<const CompiledRowLayout> layout,
-      std::shared_ptr<const internal::model::EncodedRow> encoded);
+      std::shared_ptr<const model::EncodedRow> encoded);
 
   bool Has(FieldId field_id) const noexcept;
 
@@ -300,7 +300,7 @@ class Row {
                                     const AccessorMetadata* accessor) const;
 
   std::shared_ptr<const CompiledRowLayout> layout_;
-  std::shared_ptr<const internal::model::EncodedRow> encoded_;
+  std::shared_ptr<const model::EncodedRow> encoded_;
 };
 
 }  // namespace kv_index

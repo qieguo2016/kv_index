@@ -10,7 +10,7 @@
 
 #include "kv_index/status.h"
 
-namespace kv_index::internal::base {
+namespace kv_index::base {
 
 constexpr std::uint64_t AlignUp(std::uint64_t value,
                                 std::uint64_t alignment) noexcept {
@@ -135,6 +135,6 @@ inline StatusOr<ValueRef16> DecodeValueRef16(std::span<const std::byte> bytes,
   };
 }
 
-}  // namespace kv_index::internal::base
+}  // namespace kv_index::base
 
 #endif  // KV_INDEX_SRC_BASE_BYTE_IO_H_

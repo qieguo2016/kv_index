@@ -9,7 +9,7 @@
 
 #include "kv_index/status.h"
 
-namespace kv_index::internal::store {
+namespace kv_index::store {
 
 struct FrozenPrimaryKeyIndexEntry {
   std::uint64_t primary_key = 0;
@@ -80,6 +80,6 @@ StatusOr<std::vector<std::byte>> BuildFrozenPrimaryKeyIndex(
     std::span<const FrozenPrimaryKeyIndexEntry> entries,
     FrozenPrimaryKeyIndexBuildOptions options = {});
 
-}  // namespace kv_index::internal::store
+}  // namespace kv_index::store
 
 #endif  // KV_INDEX_SRC_STORE_FROZEN_PRIMARY_KEY_INDEX_H_

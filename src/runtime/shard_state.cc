@@ -6,7 +6,7 @@
 
 #include "src/artifact/mmap_snapshot_backing.h"
 
-namespace kv_index::internal::runtime {
+namespace kv_index::runtime {
 namespace {
 
 void CopyLayoutMetadata(const std::shared_ptr<const CompiledRowLayout>& layout,
@@ -114,4 +114,4 @@ ShardRuntimeStatus ShardState::GetRuntimeStatus() const {
   return status;
 }
 
-}  // namespace kv_index::internal::runtime
+}  // namespace kv_index::runtime

@@ -33,15 +33,15 @@ using kv_index::RuntimeSchema;
 using kv_index::Status;
 using kv_index::StatusCode;
 using kv_index::StatusOr;
-using kv_index::internal::ingest::KafkaUpdateConsumer;
-using kv_index::internal::ingest::KafkaUpdateConsumerClient;
-using kv_index::internal::store::RealtimeDeltaAtomicTable;
-using kv_index::internal::ingest::UpdateApplier;
-using kv_index::internal::ingest::UpdateApplierOptions;
-using kv_index::internal::ingest::UpdateCoordinator;
-using kv_index::internal::ingest::UpdateCoordinatorOptions;
-using kv_index::internal::ingest::UpdateGenerationRole;
-using kv_index::internal::ingest::UpdateTargetRoute;
+using kv_index::ingest::KafkaUpdateConsumer;
+using kv_index::ingest::KafkaUpdateConsumerClient;
+using kv_index::store::RealtimeDeltaAtomicTable;
+using kv_index::ingest::UpdateApplier;
+using kv_index::ingest::UpdateApplierOptions;
+using kv_index::ingest::UpdateCoordinator;
+using kv_index::ingest::UpdateCoordinatorOptions;
+using kv_index::ingest::UpdateGenerationRole;
+using kv_index::ingest::UpdateTargetRoute;
 
 enum class WireKind : std::uint8_t {
   kInt32 = 2,

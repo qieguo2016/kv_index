@@ -23,12 +23,12 @@ using kv_index::FieldSpec;
 using kv_index::FieldType;
 using kv_index::ForwardIndex;
 using kv_index::RuntimeSchema;
-using kv_index::internal::testing::ForwardIndexTestPeer;
-using kv_index::internal::store::FullSnapshotView;
-using kv_index::internal::store::OwnedSnapshotBacking;
-using kv_index::internal::runtime::ShardState;
-using kv_index::internal::store::SnapshotBuilder;
-namespace storage = kv_index::internal::model;
+using kv_index::testing::ForwardIndexTestPeer;
+using kv_index::store::FullSnapshotView;
+using kv_index::store::OwnedSnapshotBacking;
+using kv_index::runtime::ShardState;
+using kv_index::store::SnapshotBuilder;
+namespace storage = kv_index::model;
 
 FieldSpec Scalar(kv_index::FieldId field_id, std::string name,
                  FieldType type) {

@@ -10,7 +10,7 @@
 #include "src/store/snapshot.h"
 #include "src/store/snapshot_builder.h"
 
-namespace kv_index::internal::rebuild {
+namespace kv_index::rebuild {
 
 struct CompactionBuildRequest {
   const runtime::ShardState& state;
@@ -31,6 +31,6 @@ BuildCompactedDeltaSnapshot(const CompactionBuildRequest& request);
 StatusOr<std::shared_ptr<const runtime::ShardState>> FinishDeltaCompaction(
     FinishDeltaCompactionRequest request);
 
-}  // namespace kv_index::internal::rebuild
+}  // namespace kv_index::rebuild
 
 #endif  // KV_INDEX_SRC_REBUILD_COMPACTION_H_

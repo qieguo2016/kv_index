@@ -6,7 +6,7 @@
 
 #include "src/store/frozen_primary_key_index.h"
 
-namespace kv_index::internal::rebuild {
+namespace kv_index::rebuild {
 namespace {
 
 Status CheckSameLayout(const store::SnapshotBacking& lhs,
@@ -46,7 +46,7 @@ Status CheckSameLayout(const store::SnapshotBacking& lhs,
 Status AddRowIfNew(store::SnapshotBuilder* builder,
                    std::unordered_set<std::uint64_t>* seen,
                    std::uint64_t primary_key,
-                   internal::model::EncodedRow encoded) {
+                   model::EncodedRow encoded) {
   if (builder == nullptr || seen == nullptr) {
     return Status::InvalidArgument("rebase row sink is null");
   }
@@ -156,4 +156,4 @@ StatusOr<std::shared_ptr<const runtime::ShardState>> FinishFullRebase(
       });
 }
 
-}  // namespace kv_index::internal::rebuild
+}  // namespace kv_index::rebuild

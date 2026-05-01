@@ -13,7 +13,7 @@
 
 #include "src/base/hash.h"
 
-namespace kv_index::internal::store {
+namespace kv_index::store {
 namespace {
 
 bool IsPowerOfTwo(std::size_t value) noexcept {
@@ -28,7 +28,7 @@ std::uint64_t StringBytes(const std::vector<std::string>& values) noexcept {
   return bytes;
 }
 
-std::uint64_t PayloadPoolBytes(const internal::model::EncodedRow& encoded) noexcept {
+std::uint64_t PayloadPoolBytes(const model::EncodedRow& encoded) noexcept {
   std::uint64_t bytes = encoded.arena.size();
   bytes += StringBytes(encoded.string_dictionary);
   for (const auto& values : encoded.scalar_list_dictionary) {
@@ -227,7 +227,7 @@ RealtimeDeltaAtomicTable::RealtimeDeltaAtomicTable(Options options)
 
 StatusOr<std::unique_ptr<RealtimeRowRef>> RealtimeDeltaAtomicTable::BuildRowRef(
     std::uint64_t primary_key, SourcePosition position,
-    internal::model::EncodedRow encoded) const {
+    model::EncodedRow encoded) const {
   if (layout_ == nullptr) {
     return Status::FailedPrecondition("realtime table has no row layout");
   }
@@ -244,14 +244,14 @@ StatusOr<std::unique_ptr<RealtimeRowRef>> RealtimeDeltaAtomicTable::BuildRowRef(
         "encoded row slot size does not match realtime layout");
   }
 
-  auto validation = internal::model::MaterializeRow(layout_, encoded);
+  auto validation = model::MaterializeRow(layout_, encoded);
   if (!validation.ok()) {
     return validation.status();
   }
 
   const std::uint64_t row_slot_bytes = encoded.row_slot.size();
   const std::uint64_t payload_pool_bytes = PayloadPoolBytes(encoded);
-  auto stored = std::make_shared<const internal::model::EncodedRow>(std::move(encoded));
+  auto stored = std::make_shared<const model::EncodedRow>(std::move(encoded));
   return std::make_unique<RealtimeRowRef>(RealtimeRowRef{
       .primary_key = primary_key,
       .position = position,
@@ -263,7 +263,7 @@ StatusOr<std::unique_ptr<RealtimeRowRef>> RealtimeDeltaAtomicTable::BuildRowRef(
 
 Status RealtimeDeltaAtomicTable::Publish(std::uint64_t primary_key,
                                          SourcePosition position,
-                                         internal::model::EncodedRow encoded) {
+                                         model::EncodedRow encoded) {
   auto row_ref = BuildRowRef(primary_key, position, std::move(encoded));
   if (!row_ref.ok()) {
     return row_ref.status();
@@ -378,4 +378,4 @@ RealtimeDeltaStats RealtimeDeltaAtomicTable::stats() const {
   };
 }
 
-}  // namespace kv_index::internal::store
+}  // namespace kv_index::store

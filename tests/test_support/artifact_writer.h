@@ -16,7 +16,7 @@ namespace kv_index::test_support {
 
 struct TestArtifactRow {
   std::uint64_t primary_key = 0;
-  internal::model::EncodedRow encoded;
+  model::EncodedRow encoded;
 };
 
 struct ArtifactShardSpec {

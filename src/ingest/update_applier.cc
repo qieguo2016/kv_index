@@ -16,7 +16,7 @@
 #include "src/base/hash.h"
 #include "src/model/row_storage.h"
 
-namespace kv_index::internal::ingest {
+namespace kv_index::ingest {
 namespace {
 
 // Kafka upsert payload v1 is a complete-row binary frame:
@@ -86,7 +86,7 @@ class ByteReader {
     if (remaining() < sizeof(T)) {
       return Status::InvalidArgument("payload is truncated");
     }
-    auto value = internal::base::ReadLittleEndian<T>(bytes_, offset_);
+    auto value = base::ReadLittleEndian<T>(bytes_, offset_);
     if (!value.ok()) {
       return value.status();
     }
@@ -176,7 +176,7 @@ StatusOr<T> ReadExactInteger(std::span<const std::byte> bytes) {
   if (bytes.size() != sizeof(T)) {
     return Status::InvalidArgument("payload scalar byte length is invalid");
   }
-  return internal::base::ReadLittleEndian<T>(bytes, 0);
+  return base::ReadLittleEndian<T>(bytes, 0);
 }
 
 StatusOr<bool> ReadBool(std::span<const std::byte> bytes) {
@@ -384,7 +384,7 @@ const T* GetValue(const DecodedField& field) {
 
 Status WriteArenaStringListField(const FieldLayout& field,
                                  const std::vector<std::string>& values,
-                                 internal::model::EncodedRow* encoded) {
+                                 model::EncodedRow* encoded) {
   if (encoded == nullptr) {
     return Status::InvalidArgument("encoded row must not be null");
   }
@@ -412,8 +412,8 @@ Status WriteArenaStringListField(const FieldLayout& field,
     encoded->arena.insert(
         encoded->arena.end(), reinterpret_cast<const std::byte*>(value.data()),
         reinterpret_cast<const std::byte*>(value.data()) + value.size());
-    const Status ref_status = internal::base::WriteValueRef16(
-        internal::base::ValueRef16{
+    const Status ref_status = base::WriteValueRef16(
+        base::ValueRef16{
             .offset = value_offset,
             .byte_length = static_cast<std::uint32_t>(value.size()),
             .element_count_or_flags = 0,
@@ -425,9 +425,9 @@ Status WriteArenaStringListField(const FieldLayout& field,
     }
   }
 
-  return internal::model::WriteValueRefField(
+  return model::WriteValueRefField(
       field,
-      internal::base::ValueRef16{
+      base::ValueRef16{
           .offset = refs_offset,
           .byte_length = static_cast<std::uint32_t>(refs_bytes),
           .element_count_or_flags = static_cast<std::uint32_t>(values.size()),
@@ -449,7 +449,7 @@ StatusOr<std::vector<std::byte>> EncodeBoolListBytes(
 
 Status WriteArenaBoolListField(const FieldLayout& field,
                                const std::vector<bool>& values,
-                               internal::model::EncodedRow* encoded) {
+                               model::EncodedRow* encoded) {
   if (encoded == nullptr) {
     return Status::InvalidArgument("encoded row must not be null");
   }
@@ -463,9 +463,9 @@ Status WriteArenaBoolListField(const FieldLayout& field,
   }
   const std::uint64_t offset = encoded->arena.size();
   encoded->arena.insert(encoded->arena.end(), payload->begin(), payload->end());
-  return internal::model::WriteValueRefField(
+  return model::WriteValueRefField(
       field,
-      internal::base::ValueRef16{
+      base::ValueRef16{
           .offset = offset,
           .byte_length = static_cast<std::uint32_t>(payload->size()),
           .element_count_or_flags = static_cast<std::uint32_t>(values.size()),
@@ -475,7 +475,7 @@ Status WriteArenaBoolListField(const FieldLayout& field,
 
 Status WriteScalarFieldValue(const FieldLayout& field,
                              const DecodedField& decoded,
-                             internal::model::EncodedRow* encoded) {
+                             model::EncodedRow* encoded) {
   if (field.is_list) {
     return Status::InvalidArgument("payload field shape does not match layout");
   }
@@ -486,35 +486,35 @@ Status WriteScalarFieldValue(const FieldLayout& field,
       if (value == nullptr) {
         return Status::InvalidArgument("payload int8 field type mismatch");
       }
-      return internal::model::WriteScalarField(field, *value, encoded);
+      return model::WriteScalarField(field, *value, encoded);
     }
     case FieldType::kInt32: {
       const auto* value = GetValue<std::int32_t>(decoded);
       if (value == nullptr) {
         return Status::InvalidArgument("payload int32 field type mismatch");
       }
-      return internal::model::WriteScalarField(field, *value, encoded);
+      return model::WriteScalarField(field, *value, encoded);
     }
     case FieldType::kInt64: {
       const auto* value = GetValue<std::int64_t>(decoded);
       if (value == nullptr) {
         return Status::InvalidArgument("payload int64 field type mismatch");
       }
-      return internal::model::WriteScalarField(field, *value, encoded);
+      return model::WriteScalarField(field, *value, encoded);
     }
     case FieldType::kUInt64: {
       const auto* value = GetValue<std::uint64_t>(decoded);
       if (value == nullptr) {
         return Status::InvalidArgument("payload uint64 field type mismatch");
       }
-      return internal::model::WriteScalarField(field, *value, encoded);
+      return model::WriteScalarField(field, *value, encoded);
     }
     case FieldType::kBool: {
       const auto* value = GetValue<bool>(decoded);
       if (value == nullptr) {
         return Status::InvalidArgument("payload bool field type mismatch");
       }
-      return internal::model::WriteScalarField(field, *value, encoded);
+      return model::WriteScalarField(field, *value, encoded);
     }
     case FieldType::kString: {
       const auto* value = GetValue<std::string>(decoded);
@@ -522,7 +522,7 @@ Status WriteScalarFieldValue(const FieldLayout& field,
         return Status::InvalidArgument("payload string field type mismatch");
       }
       if (field.encoding == FieldEncoding::kArena) {
-        return internal::model::WriteArenaStringField(field, *value, encoded);
+        return model::WriteArenaStringField(field, *value, encoded);
       }
       if (field.encoding == FieldEncoding::kDictionary) {
         if (encoded == nullptr) {
@@ -535,7 +535,7 @@ Status WriteScalarFieldValue(const FieldLayout& field,
         const auto id =
             static_cast<std::uint32_t>(encoded->string_dictionary.size());
         encoded->string_dictionary.push_back(*value);
-        return internal::model::WriteDictionaryStringField(field, id, encoded);
+        return model::WriteDictionaryStringField(field, id, encoded);
       }
       return Status::InvalidArgument("payload string field encoding unsupported");
     }
@@ -546,15 +546,15 @@ Status WriteScalarFieldValue(const FieldLayout& field,
 template <typename T>
 Status WriteArenaScalarList(const FieldLayout& field,
                             const std::vector<T>& values,
-                            internal::model::EncodedRow* encoded) {
-  return internal::model::WriteArenaListField<T>(
+                            model::EncodedRow* encoded) {
+  return model::WriteArenaListField<T>(
       field, std::span<const T>(values.data(), values.size()), encoded);
 }
 
 template <typename T>
 Status WriteListDictionaryScalarList(const FieldLayout& field,
                                      const std::vector<T>& values,
-                                     internal::model::EncodedRow* encoded) {
+                                     model::EncodedRow* encoded) {
   if (encoded == nullptr) {
     return Status::InvalidArgument("encoded row must not be null");
   }
@@ -563,20 +563,20 @@ Status WriteListDictionaryScalarList(const FieldLayout& field,
           std::numeric_limits<std::uint32_t>::max()) {
     return Status::InvalidArgument("scalar-list dictionary entry is too large");
   }
-  auto payload = internal::model::EncodeScalarList(values);
+  auto payload = model::EncodeScalarList(values);
   if (!payload.ok()) {
     return payload.status();
   }
   const auto dictionary_id =
       static_cast<std::uint32_t>(encoded->scalar_list_dictionary.size());
   encoded->scalar_list_dictionary.push_back(std::move(payload).value());
-  return internal::model::WriteListDictionaryField(
+  return model::WriteListDictionaryField(
       field, dictionary_id, static_cast<std::uint32_t>(values.size()), encoded);
 }
 
 Status WriteListFieldValue(const FieldLayout& field,
                            const DecodedField& decoded,
-                           internal::model::EncodedRow* encoded) {
+                           model::EncodedRow* encoded) {
   if (!field.is_list) {
     return Status::InvalidArgument("payload field shape does not match layout");
   }
@@ -658,7 +658,7 @@ Status WriteListFieldValue(const FieldLayout& field,
         const auto dictionary_id =
             static_cast<std::uint32_t>(encoded->scalar_list_dictionary.size());
         encoded->scalar_list_dictionary.push_back(std::move(payload).value());
-        return internal::model::WriteListDictionaryField(
+        return model::WriteListDictionaryField(
             field, dictionary_id, static_cast<std::uint32_t>(values->size()),
             encoded);
       }
@@ -686,7 +686,7 @@ Status WriteListFieldValue(const FieldLayout& field,
         const auto dictionary_id =
             static_cast<std::uint32_t>(encoded->string_list_dictionary.size());
         encoded->string_list_dictionary.push_back(*values);
-        return internal::model::WriteListDictionaryField(
+        return model::WriteListDictionaryField(
             field, dictionary_id, static_cast<std::uint32_t>(values->size()),
             encoded);
       }
@@ -705,7 +705,7 @@ Status WriteListFieldValue(const FieldLayout& field,
               encoded->string_element_dictionary.size()));
           encoded->string_element_dictionary.push_back(value);
         }
-        return internal::model::WriteElementDictionaryStringListField(
+        return model::WriteElementDictionaryStringListField(
             field, std::span<const std::uint32_t>(dictionary_ids), encoded);
       }
       break;
@@ -714,14 +714,14 @@ Status WriteListFieldValue(const FieldLayout& field,
   return Status::InvalidArgument("payload list field encoding unsupported");
 }
 
-StatusOr<internal::model::EncodedRow> EncodeForLayout(
+StatusOr<model::EncodedRow> EncodeForLayout(
     const DecodedPayload& payload,
     const std::shared_ptr<const CompiledRowLayout>& layout) {
   if (layout == nullptr) {
     return Status::FailedPrecondition("target layout is null");
   }
 
-  auto encoded = internal::model::CreateEncodedRow(*layout);
+  auto encoded = model::CreateEncodedRow(*layout);
   for (const DecodedField& decoded : payload.fields) {
     const FieldLayout* field = layout->FindField(decoded.field_id);
     if (field == nullptr) {
@@ -739,7 +739,7 @@ StatusOr<internal::model::EncodedRow> EncodeForLayout(
     }
   }
 
-  auto validation = internal::model::MaterializeRow(layout, encoded);
+  auto validation = model::MaterializeRow(layout, encoded);
   if (!validation.ok()) {
     return validation.status();
   }
@@ -757,7 +757,7 @@ struct PreparedPublish {
   std::shared_ptr<store::RealtimeDeltaAtomicTable> table;
   std::uint64_t primary_key = 0;
   SourcePosition position;
-  internal::model::EncodedRow encoded;
+  model::EncodedRow encoded;
 };
 
 }  // namespace
@@ -821,4 +821,4 @@ Status UpdateApplier::ApplyBatch(std::span<const KafkaUpsertMessage> messages) {
   return Status::Ok();
 }
 
-}  // namespace kv_index::internal::ingest
+}  // namespace kv_index::ingest

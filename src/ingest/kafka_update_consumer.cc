@@ -13,7 +13,7 @@
 
 #include <librdkafka/rdkafka.h>
 
-namespace kv_index::internal::ingest {
+namespace kv_index::ingest {
 namespace {
 
 using PartitionKey = std::pair<std::string, std::int32_t>;
@@ -500,4 +500,4 @@ Status KafkaUpdateConsumer::Commit(const KafkaCheckpoint& checkpoint) {
   return client_->Commit(checkpoint);
 }
 
-}  // namespace kv_index::internal::ingest
+}  // namespace kv_index::ingest

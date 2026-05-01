@@ -18,7 +18,7 @@ using kv_index::CompiledRowLayout;
 using kv_index::FieldEncoding;
 using kv_index::FieldSpec;
 using kv_index::FieldType;
-namespace storage = kv_index::internal::model;
+namespace storage = kv_index::model;
 
 std::shared_ptr<const CompiledRowLayout> Layout() {
   kv_index::RuntimeSchema schema(1000);
@@ -45,17 +45,17 @@ int main() {
   options.shard_count = 1;
   kv_index::ForwardIndex index(options);
   auto layout = Layout();
-  kv_index::internal::store::SnapshotBuilder builder(layout);
+  kv_index::store::SnapshotBuilder builder(layout);
   for (std::uint64_t key = 1; key <= 1024; ++key) {
     (void)builder.AddRow(key, Row(*layout, static_cast<std::int32_t>(key)));
   }
   auto backing = std::move(builder).Seal().value();
-  (void)kv_index::internal::testing::ForwardIndexTestPeer::PublishShard(
-      index, std::make_shared<const kv_index::internal::runtime::ShardState>(
+  (void)kv_index::testing::ForwardIndexTestPeer::PublishShard(
+      index, std::make_shared<const kv_index::runtime::ShardState>(
                  0, 1,
-                 kv_index::internal::runtime::ShardState::Layers{
+                 kv_index::runtime::ShardState::Layers{
                      .full_snapshot =
-                         kv_index::internal::store::FullSnapshotView(backing)}));
+                         kv_index::store::FullSnapshotView(backing)}));
 
   constexpr std::uint64_t kIterations = 200000;
   std::uint64_t checksum = 0;

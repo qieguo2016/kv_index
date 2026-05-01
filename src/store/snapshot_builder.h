@@ -11,7 +11,7 @@
 #include "src/model/row_storage.h"
 #include "src/store/snapshot.h"
 
-namespace kv_index::internal::store {
+namespace kv_index::store {
 
 struct SnapshotBuildOptions {
   std::uint64_t hash_seed = 0;
@@ -23,7 +23,7 @@ class SnapshotBuilder {
   explicit SnapshotBuilder(std::shared_ptr<const CompiledRowLayout> layout,
                            SnapshotBuildOptions options = {});
 
-  Status AddRow(std::uint64_t primary_key, internal::model::EncodedRow encoded);
+  Status AddRow(std::uint64_t primary_key, model::EncodedRow encoded);
 
   StatusOr<std::shared_ptr<const OwnedSnapshotBacking>> Seal();
 
@@ -36,6 +36,6 @@ class SnapshotBuilder {
   std::vector<OwnedSnapshotRowPayload> row_payloads_;
 };
 
-}  // namespace kv_index::internal::store
+}  // namespace kv_index::store
 
 #endif  // KV_INDEX_SRC_STORE_SNAPSHOT_BUILDER_H_

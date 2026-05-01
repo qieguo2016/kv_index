@@ -4,7 +4,7 @@
 #include <memory>
 #include <utility>
 
-namespace kv_index::internal::runtime {
+namespace kv_index::runtime {
 
 ShardDirectory::ShardDirectory(std::uint32_t shard_count)
     : shard_count_(shard_count), shards_(shard_count) {}
@@ -33,4 +33,4 @@ StatusOr<std::shared_ptr<const ShardState>> ShardDirectory::Load(
                                    std::memory_order_acquire);
 }
 
-}  // namespace kv_index::internal::runtime
+}  // namespace kv_index::runtime

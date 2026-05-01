@@ -17,7 +17,7 @@
 #include "src/ingest/update_applier.h"
 #include "src/ingest/update_coordinator.h"
 
-namespace kv_index::internal::rebuild {
+namespace kv_index::rebuild {
 namespace {
 
 std::mutex& CatchUpFactoryMutex() {
@@ -489,4 +489,4 @@ Status RunExternalArtifactLoad(const LoadRequest& request, LoadId id,
   return Status::Ok();
 }
 
-}  // namespace kv_index::internal::rebuild
+}  // namespace kv_index::rebuild

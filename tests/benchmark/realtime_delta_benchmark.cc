@@ -14,7 +14,7 @@ using kv_index::CompiledRowLayout;
 using kv_index::FieldEncoding;
 using kv_index::FieldSpec;
 using kv_index::FieldType;
-namespace storage = kv_index::internal::model;
+namespace storage = kv_index::model;
 
 std::shared_ptr<const CompiledRowLayout> Layout() {
   kv_index::RuntimeSchema schema(1002);
@@ -38,8 +38,8 @@ storage::EncodedRow Row(const CompiledRowLayout& layout, std::int32_t score) {
 
 int main() {
   auto layout = Layout();
-  kv_index::internal::store::RealtimeDeltaAtomicTable table(
-      kv_index::internal::store::RealtimeDeltaAtomicTable::Options{
+  kv_index::store::RealtimeDeltaAtomicTable table(
+      kv_index::store::RealtimeDeltaAtomicTable::Options{
           .layout = layout,
           .capacity = 4096,
       });

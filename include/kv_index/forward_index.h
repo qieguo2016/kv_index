@@ -16,13 +16,13 @@
 
 namespace kv_index {
 
-namespace internal::runtime {
+namespace runtime {
 class ShardDirectory;
-}  // namespace internal::runtime
+}  // namespace runtime
 
-namespace internal::testing {
+namespace testing {
 class ForwardIndexTestPeer;
-}  // namespace internal::testing
+}  // namespace testing
 
 struct ForwardIndexOptions {
   std::uint32_t shard_count = 128;
@@ -55,10 +55,10 @@ class ForwardIndex {
   RuntimeStatus GetRuntimeStatus() const;
 
  private:
-  friend class internal::testing::ForwardIndexTestPeer;
+  friend class testing::ForwardIndexTestPeer;
 
   ForwardIndexOptions options_;
-  std::unique_ptr<internal::runtime::ShardDirectory> shard_directory_;
+  std::unique_ptr<runtime::ShardDirectory> shard_directory_;
 
   mutable std::mutex load_mu_;
   LoadId next_load_id_ = 1;

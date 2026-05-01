@@ -24,8 +24,8 @@ using kv_index::PollOptions;
 using kv_index::Status;
 using kv_index::StatusCode;
 using kv_index::StatusOr;
-using kv_index::internal::ingest::KafkaUpdateConsumer;
-using kv_index::internal::ingest::KafkaUpdateConsumerClient;
+using kv_index::ingest::KafkaUpdateConsumer;
+using kv_index::ingest::KafkaUpdateConsumerClient;
 
 KafkaConsumerConfig ValidConfig() {
   return KafkaConsumerConfig{

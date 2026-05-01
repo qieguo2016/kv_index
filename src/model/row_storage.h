@@ -17,7 +17,7 @@
 #include "kv_index/status.h"
 #include "src/base/byte_io.h"
 
-namespace kv_index::internal::model {
+namespace kv_index::model {
 
 struct EncodedRow {
   std::uint64_t schema_version = 0;
@@ -154,6 +154,6 @@ Status WriteArenaListField(const FieldLayout& field, std::span<const T> values,
   }
 }
 
-}  // namespace kv_index::internal::model
+}  // namespace kv_index::model
 
 #endif  // KV_INDEX_SRC_MODEL_ROW_STORAGE_H_

@@ -37,20 +37,20 @@ using kv_index::LoadStateCode;
 using kv_index::RuntimeSchema;
 using kv_index::Status;
 using kv_index::StatusOr;
-using kv_index::internal::rebuild::AsyncCatchUpRequest;
-using kv_index::internal::rebuild::AsyncCatchUpRunner;
-using kv_index::internal::rebuild::AsyncCatchUpRunnerFactory;
-using kv_index::internal::testing::ForwardIndexTestPeer;
-using kv_index::internal::store::FullSnapshotView;
-using kv_index::internal::store::OwnedSnapshotBacking;
-using kv_index::internal::rebuild::SetAsyncCatchUpRunnerFactoryForTesting;
-using kv_index::internal::runtime::ShardState;
-using kv_index::internal::store::SnapshotBuilder;
+using kv_index::rebuild::AsyncCatchUpRequest;
+using kv_index::rebuild::AsyncCatchUpRunner;
+using kv_index::rebuild::AsyncCatchUpRunnerFactory;
+using kv_index::testing::ForwardIndexTestPeer;
+using kv_index::store::FullSnapshotView;
+using kv_index::store::OwnedSnapshotBacking;
+using kv_index::rebuild::SetAsyncCatchUpRunnerFactoryForTesting;
+using kv_index::runtime::ShardState;
+using kv_index::store::SnapshotBuilder;
 using kv_index::test_support::ArtifactShardSpec;
 using kv_index::test_support::TestArtifactSpec;
 using kv_index::test_support::TestSourceProgress;
 using kv_index::test_support::WriteTestArtifact;
-namespace storage = kv_index::internal::model;
+namespace storage = kv_index::model;
 
 FieldSpec Scalar(kv_index::FieldId field_id, std::string name,
                  FieldType type) {

@@ -12,10 +12,10 @@
 
 #include "src/base/byte_io.h"
 
-namespace kv_index::internal::artifact {
+namespace kv_index::artifact {
 namespace {
 
-using kv_index::internal::base::ReadLittleEndian;
+using kv_index::base::ReadLittleEndian;
 
 constexpr std::size_t kMagicOffset = 0;
 constexpr std::size_t kVersionOffset = 8;
@@ -398,4 +398,4 @@ StatusOr<ParsedArtifact> ParseArtifact(std::span<const std::byte> bytes,
   return artifact;
 }
 
-}  // namespace kv_index::internal::artifact
+}  // namespace kv_index::artifact
