@@ -12,7 +12,7 @@
 #include "src/base/byte_io.h"
 #include "src/base/hash.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::store {
 namespace {
 
 constexpr std::uint8_t kEmptyControl = 0x80;
@@ -67,81 +67,81 @@ StatusOr<std::uint64_t> CalculateCapacity(std::uint64_t row_count,
 
 Status WriteHeader(std::span<std::byte> bytes,
                    const FrozenPrimaryKeyIndexMetadata& metadata) {
-  if (const Status status = internal::WriteLittleEndian(
+  if (const Status status = internal::base::WriteLittleEndian(
           FrozenPrimaryKeyIndexView::kMagic, bytes,
           FrozenPrimaryKeyIndexView::kMagicOffset);
       !status.ok()) {
     return status;
   }
-  if (const Status status = internal::WriteLittleEndian(
+  if (const Status status = internal::base::WriteLittleEndian(
           FrozenPrimaryKeyIndexView::kFormatVersion, bytes,
           FrozenPrimaryKeyIndexView::kFormatVersionOffset);
       !status.ok()) {
     return status;
   }
-  if (const Status status = internal::WriteLittleEndian(
+  if (const Status status = internal::base::WriteLittleEndian(
           static_cast<std::uint32_t>(
               FrozenPrimaryKeyIndexView::kSerializedHeaderSize),
           bytes, FrozenPrimaryKeyIndexView::kHeaderSizeOffset);
       !status.ok()) {
     return status;
   }
-  if (const Status status = internal::WriteLittleEndian(
+  if (const Status status = internal::base::WriteLittleEndian(
           metadata.row_count, bytes,
           FrozenPrimaryKeyIndexView::kRowCountOffset);
       !status.ok()) {
     return status;
   }
-  if (const Status status = internal::WriteLittleEndian(
+  if (const Status status = internal::base::WriteLittleEndian(
           metadata.capacity, bytes,
           FrozenPrimaryKeyIndexView::kCapacityOffset);
       !status.ok()) {
     return status;
   }
-  if (const Status status = internal::WriteLittleEndian(
+  if (const Status status = internal::base::WriteLittleEndian(
           metadata.hash_seed, bytes,
           FrozenPrimaryKeyIndexView::kHashSeedOffset);
       !status.ok()) {
     return status;
   }
-  if (const Status status = internal::WriteLittleEndian(
+  if (const Status status = internal::base::WriteLittleEndian(
           metadata.hash_version, bytes,
           FrozenPrimaryKeyIndexView::kHashVersionOffset);
       !status.ok()) {
     return status;
   }
-  if (const Status status = internal::WriteLittleEndian(
+  if (const Status status = internal::base::WriteLittleEndian(
           metadata.group_width, bytes,
           FrozenPrimaryKeyIndexView::kGroupWidthOffset);
       !status.ok()) {
     return status;
   }
-  if (const Status status = internal::WriteLittleEndian(
+  if (const Status status = internal::base::WriteLittleEndian(
           metadata.control_offset, bytes,
           FrozenPrimaryKeyIndexView::kControlOffsetOffset);
       !status.ok()) {
     return status;
   }
-  if (const Status status = internal::WriteLittleEndian(
+  if (const Status status = internal::base::WriteLittleEndian(
           metadata.key_offset, bytes,
           FrozenPrimaryKeyIndexView::kKeyOffsetOffset);
       !status.ok()) {
     return status;
   }
-  if (const Status status = internal::WriteLittleEndian(
+  if (const Status status = internal::base::WriteLittleEndian(
           metadata.row_offset_offset, bytes,
           FrozenPrimaryKeyIndexView::kRowOffsetOffsetOffset);
       !status.ok()) {
     return status;
   }
-  return internal::WriteLittleEndian(metadata.total_size, bytes,
+  return internal::base::WriteLittleEndian(metadata.total_size, bytes,
                                      FrozenPrimaryKeyIndexView::kTotalSizeOffset);
 }
 
 template <typename T>
 StatusOr<T> ReadHeaderField(std::span<const std::byte> bytes,
                             std::size_t offset) {
-  auto value = internal::ReadLittleEndian<T>(bytes, offset);
+  auto value = internal::base::ReadLittleEndian<T>(bytes, offset);
   if (!value.ok()) {
     return Status::InvalidArgument(value.status().message());
   }
@@ -323,7 +323,7 @@ StatusOr<std::uint64_t> FrozenPrimaryKeyIndexView::ReadKey(
   if (slot >= metadata_.capacity) {
     return Status::InvalidArgument("frozen primary-key index key slot is invalid");
   }
-  auto value = internal::ReadLittleEndian<std::uint64_t>(
+  auto value = internal::base::ReadLittleEndian<std::uint64_t>(
       bytes_, SlotOffset(metadata_.key_offset, slot));
   if (!value.ok()) {
     return Status::InvalidArgument(value.status().message());
@@ -337,7 +337,7 @@ StatusOr<std::uint64_t> FrozenPrimaryKeyIndexView::ReadRowOffset(
     return Status::InvalidArgument(
         "frozen primary-key index row-offset slot is invalid");
   }
-  auto value = internal::ReadLittleEndian<std::uint64_t>(
+  auto value = internal::base::ReadLittleEndian<std::uint64_t>(
       bytes_, SlotOffset(metadata_.row_offset_offset, slot));
   if (!value.ok()) {
     return Status::InvalidArgument(value.status().message());
@@ -390,7 +390,7 @@ StatusOr<FrozenPrimaryKeyIndexView> FrozenPrimaryKeyIndexView::Validate(
           "frozen primary-key index contains duplicate primary keys");
     }
     const std::uint64_t hash =
-        StableHash64(key.value(), metadata->hash_seed, metadata->hash_version);
+        base::StableHash64(key.value(), metadata->hash_seed, metadata->hash_version);
     if (control != H2(hash)) {
       return Status::InvalidArgument(
           "frozen primary-key index control byte does not match key hash");
@@ -428,7 +428,7 @@ StatusOr<std::optional<std::uint64_t>> FrozenPrimaryKeyIndexView::Lookup(
     return Status::InvalidArgument("frozen primary-key index view is invalid");
   }
   const std::uint64_t hash =
-      StableHash64(primary_key, metadata_.hash_seed, metadata_.hash_version);
+      base::StableHash64(primary_key, metadata_.hash_seed, metadata_.hash_version);
   const std::uint8_t h2 = H2(hash);
   const std::uint64_t mask = metadata_.capacity - 1U;
   const std::size_t control_offset =
@@ -567,7 +567,7 @@ StatusOr<std::vector<std::byte>> BuildFrozenPrimaryKeyIndex(
   const std::uint64_t mask = metadata.capacity - 1U;
   for (const FrozenPrimaryKeyIndexEntry& entry : entries) {
     const std::uint64_t hash =
-        StableHash64(entry.primary_key, metadata.hash_seed,
+        base::StableHash64(entry.primary_key, metadata.hash_seed,
                      metadata.hash_version);
     std::uint64_t slot = hash & mask;
     while (std::to_integer<std::uint8_t>(bytes[control_offset + slot]) !=
@@ -576,13 +576,13 @@ StatusOr<std::vector<std::byte>> BuildFrozenPrimaryKeyIndex(
     }
 
     bytes[control_offset + slot] = static_cast<std::byte>(H2(hash));
-    if (const Status status = internal::WriteLittleEndian(
+    if (const Status status = internal::base::WriteLittleEndian(
             entry.primary_key, std::span<std::byte>(bytes),
             SlotOffset(metadata.key_offset, slot));
         !status.ok()) {
       return status;
     }
-    if (const Status status = internal::WriteLittleEndian(
+    if (const Status status = internal::base::WriteLittleEndian(
             entry.row_offset, std::span<std::byte>(bytes),
             SlotOffset(metadata.row_offset_offset, slot));
         !status.ok()) {
@@ -597,4 +597,4 @@ StatusOr<std::vector<std::byte>> BuildFrozenPrimaryKeyIndex(
   return bytes;
 }
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::store

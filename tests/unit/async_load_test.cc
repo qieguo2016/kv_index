@@ -26,7 +26,7 @@
 
 namespace {
 
-namespace storage = kv_index::internal;
+namespace storage = kv_index::internal::model;
 
 using kv_index::CompiledRowLayout;
 using kv_index::FieldEncoding;
@@ -40,14 +40,14 @@ using kv_index::LoadStateCode;
 using kv_index::RuntimeSchema;
 using kv_index::Status;
 using kv_index::StatusOr;
-using kv_index::core::AsyncCatchUpRequest;
-using kv_index::core::AsyncCatchUpRunner;
-using kv_index::core::AsyncCatchUpRunnerFactory;
-using kv_index::core::ForwardIndexTestPeer;
-using kv_index::core::FullSnapshotView;
-using kv_index::core::OwnedSnapshotBacking;
-using kv_index::core::ShardState;
-using kv_index::core::SnapshotBuilder;
+using kv_index::internal::rebuild::AsyncCatchUpRequest;
+using kv_index::internal::rebuild::AsyncCatchUpRunner;
+using kv_index::internal::rebuild::AsyncCatchUpRunnerFactory;
+using kv_index::internal::testing::ForwardIndexTestPeer;
+using kv_index::internal::store::FullSnapshotView;
+using kv_index::internal::store::OwnedSnapshotBacking;
+using kv_index::internal::runtime::ShardState;
+using kv_index::internal::store::SnapshotBuilder;
 using kv_index::test_support::ArtifactShardSpec;
 using kv_index::test_support::TestArtifactSpec;
 using kv_index::test_support::TestSourceProgress;
@@ -116,11 +116,11 @@ std::shared_ptr<const ShardState> FullState(
 class ScopedCatchUpRunnerFactory {
  public:
   explicit ScopedCatchUpRunnerFactory(AsyncCatchUpRunnerFactory factory)
-      : previous_(kv_index::core::SetAsyncCatchUpRunnerFactoryForTesting(
+      : previous_(kv_index::internal::rebuild::SetAsyncCatchUpRunnerFactoryForTesting(
             std::move(factory))) {}
 
   ~ScopedCatchUpRunnerFactory() {
-    (void)kv_index::core::SetAsyncCatchUpRunnerFactoryForTesting(
+    (void)kv_index::internal::rebuild::SetAsyncCatchUpRunnerFactoryForTesting(
         std::move(previous_));
   }
 

@@ -17,7 +17,7 @@
 #include "kv_index/status.h"
 #include "src/base/byte_io.h"
 
-namespace kv_index::internal {
+namespace kv_index::internal::model {
 
 struct EncodedRow {
   std::uint64_t schema_version = 0;
@@ -35,7 +35,7 @@ StatusOr<Row> MaterializeRow(std::shared_ptr<const CompiledRowLayout> layout,
                              EncodedRow encoded);
 
 Status SetFieldPresent(const FieldLayout& field, EncodedRow* encoded);
-Status WriteValueRefField(const FieldLayout& field, const ValueRef16& ref,
+Status WriteValueRefField(const FieldLayout& field, const base::ValueRef16& ref,
                           EncodedRow* encoded);
 Status WriteArenaStringField(const FieldLayout& field, std::string_view value,
                              EncodedRow* encoded);
@@ -60,14 +60,14 @@ StatusOr<std::vector<std::byte>> EncodeScalarListSpan(
     for (std::size_t i = 0; i < values.size(); ++i) {
       if constexpr (std::same_as<std::remove_cv_t<T>, bool>) {
         const std::uint8_t encoded_bool = values[i] ? 1 : 0;
-        if (const Status status = WriteLittleEndian<std::uint8_t>(
+        if (const Status status = base::WriteLittleEndian<std::uint8_t>(
                 encoded_bool, std::span<std::byte>(bytes),
                 i * FieldTypeSize(FieldTypeFor<T>()));
             !status.ok()) {
           return status;
         }
       } else {
-        if (const Status status = WriteLittleEndian<std::remove_cv_t<T>>(
+        if (const Status status = base::WriteLittleEndian<std::remove_cv_t<T>>(
                 values[i], std::span<std::byte>(bytes),
                 i * FieldTypeSize(FieldTypeFor<T>()));
             !status.ok()) {
@@ -103,11 +103,11 @@ Status WriteScalarField(const FieldLayout& field, T value,
 
   Status status = Status::Ok();
   if constexpr (std::same_as<std::remove_cv_t<T>, bool>) {
-    status = WriteLittleEndian<std::uint8_t>(
+    status = base::WriteLittleEndian<std::uint8_t>(
         value ? 1 : 0, std::span<std::byte>(encoded->row_slot),
         field.slot_offset);
   } else {
-    status = WriteLittleEndian<std::remove_cv_t<T>>(
+    status = base::WriteLittleEndian<std::remove_cv_t<T>>(
         value, std::span<std::byte>(encoded->row_slot), field.slot_offset);
   }
   if (!status.ok()) {
@@ -145,7 +145,7 @@ Status WriteArenaListField(const FieldLayout& field, std::span<const T> values,
         static_cast<std::uint32_t>(values.size());
     encoded->arena.insert(encoded->arena.end(), payload->begin(), payload->end());
     return WriteValueRefField(field,
-                              ValueRef16{
+                              base::ValueRef16{
                                   .offset = offset,
                                   .byte_length = byte_length,
                                   .element_count_or_flags = element_count,
@@ -154,6 +154,6 @@ Status WriteArenaListField(const FieldLayout& field, std::span<const T> values,
   }
 }
 
-}  // namespace kv_index::internal
+}  // namespace kv_index::internal::model
 
 #endif  // KV_INDEX_SRC_MODEL_ROW_STORAGE_H_

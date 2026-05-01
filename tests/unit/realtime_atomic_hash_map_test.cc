@@ -12,14 +12,14 @@ namespace {
 
 using kv_index::SourcePosition;
 using kv_index::StatusCode;
-using kv_index::core::RealtimeAtomicHashMap;
-using kv_index::core::RealtimeRowRef;
+using kv_index::internal::store::RealtimeAtomicHashMap;
+using kv_index::internal::store::RealtimeRowRef;
 
 RealtimeRowRef MakeRef(std::uint64_t primary_key, SourcePosition position) {
   return RealtimeRowRef{
       .primary_key = primary_key,
       .position = position,
-      .encoded = std::make_shared<const kv_index::internal::EncodedRow>(),
+      .encoded = std::make_shared<const kv_index::internal::model::EncodedRow>(),
       .row_slot_bytes = 8,
       .payload_pool_bytes = 0,
   };

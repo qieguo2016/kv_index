@@ -29,18 +29,18 @@ using kv_index::Row;
 using kv_index::RuntimeSchema;
 using kv_index::SourcePosition;
 using kv_index::StatusCode;
-using kv_index::core::BuildRebasedFullSnapshot;
-using kv_index::core::CompactDeltaSnapshot;
-using kv_index::core::FinishFullRebase;
-using kv_index::core::FinishFullRebaseRequest;
-using kv_index::core::FullRebaseBuildRequest;
-using kv_index::core::FullSnapshotView;
-using kv_index::core::OwnedSnapshotBacking;
-using kv_index::core::RealtimeDeltaAtomicTable;
-using kv_index::core::ShardState;
-using kv_index::core::SnapshotBuildOptions;
-using kv_index::core::SnapshotBuilder;
-namespace storage = kv_index::internal;
+using kv_index::internal::rebuild::BuildRebasedFullSnapshot;
+using kv_index::internal::store::CompactDeltaSnapshot;
+using kv_index::internal::rebuild::FinishFullRebase;
+using kv_index::internal::rebuild::FinishFullRebaseRequest;
+using kv_index::internal::rebuild::FullRebaseBuildRequest;
+using kv_index::internal::store::FullSnapshotView;
+using kv_index::internal::store::OwnedSnapshotBacking;
+using kv_index::internal::store::RealtimeDeltaAtomicTable;
+using kv_index::internal::runtime::ShardState;
+using kv_index::internal::store::SnapshotBuildOptions;
+using kv_index::internal::store::SnapshotBuilder;
+namespace storage = kv_index::internal::model;
 
 FieldSpec Scalar(kv_index::FieldId field_id, std::string name,
                  FieldType type) {

@@ -13,10 +13,10 @@
 namespace {
 
 using kv_index::StatusCode;
-using kv_index::core::BuildFrozenPrimaryKeyIndex;
-using kv_index::core::FrozenPrimaryKeyIndexBuildOptions;
-using kv_index::core::FrozenPrimaryKeyIndexEntry;
-using kv_index::core::FrozenPrimaryKeyIndexView;
+using kv_index::internal::store::BuildFrozenPrimaryKeyIndex;
+using kv_index::internal::store::FrozenPrimaryKeyIndexBuildOptions;
+using kv_index::internal::store::FrozenPrimaryKeyIndexEntry;
+using kv_index::internal::store::FrozenPrimaryKeyIndexView;
 
 template <typename T>
 void OverwriteLittleEndian(std::vector<std::byte>* bytes, std::size_t offset,
@@ -94,14 +94,14 @@ void ProbeCollisionsStillFindEveryKey() {
   };
   constexpr std::uint64_t kExpectedCapacity = 16;
   const std::uint64_t target_bucket =
-      kv_index::core::StableHash64(1, options.hash_seed,
+      kv_index::internal::base::StableHash64(1, options.hash_seed,
                                    options.hash_version) &
       (kExpectedCapacity - 1);
 
   std::vector<FrozenPrimaryKeyIndexEntry> entries;
   for (std::uint64_t key = 1; entries.size() < 6; ++key) {
     const std::uint64_t bucket =
-        kv_index::core::StableHash64(key, options.hash_seed,
+        kv_index::internal::base::StableHash64(key, options.hash_seed,
                                      options.hash_version) &
         (kExpectedCapacity - 1);
     if (bucket == target_bucket) {

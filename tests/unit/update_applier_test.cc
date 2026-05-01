@@ -29,11 +29,11 @@ using kv_index::Row;
 using kv_index::RuntimeSchema;
 using kv_index::Status;
 using kv_index::StatusCode;
-using kv_index::core::RealtimeDeltaAtomicTable;
-using kv_index::core::UpdateApplier;
-using kv_index::core::UpdateApplierOptions;
-using kv_index::core::UpdateGenerationRole;
-using kv_index::core::UpdateTargetRoute;
+using kv_index::internal::store::RealtimeDeltaAtomicTable;
+using kv_index::internal::ingest::UpdateApplier;
+using kv_index::internal::ingest::UpdateApplierOptions;
+using kv_index::internal::ingest::UpdateGenerationRole;
+using kv_index::internal::ingest::UpdateTargetRoute;
 
 enum class WireKind : std::uint8_t {
   kNull = 0,

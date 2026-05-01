@@ -11,12 +11,12 @@
 namespace {
 
 using kv_index::StatusCode;
-using kv_index::internal::AlignUp;
-using kv_index::internal::DecodeValueRef16;
-using kv_index::internal::ReadLittleEndian;
-using kv_index::internal::ValueRef16;
-using kv_index::internal::WriteLittleEndian;
-using kv_index::internal::WriteValueRef16;
+using kv_index::internal::base::AlignUp;
+using kv_index::internal::base::DecodeValueRef16;
+using kv_index::internal::base::ReadLittleEndian;
+using kv_index::internal::base::ValueRef16;
+using kv_index::internal::base::WriteLittleEndian;
+using kv_index::internal::base::WriteValueRef16;
 
 void FixedWidthIntegersUsePinnedLittleEndianBytes() {
   std::array<std::byte, 16> bytes{};

@@ -10,27 +10,27 @@
 #include "src/store/snapshot.h"
 #include "src/store/snapshot_builder.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::rebuild {
 
 struct FullRebaseBuildRequest {
-  const ShardState& state;
+  const runtime::ShardState& state;
   bool external_async_load_active = false;
-  SnapshotBuildOptions build_options = {};
+  store::SnapshotBuildOptions build_options = {};
 };
 
 struct FinishFullRebaseRequest {
-  const ShardState& previous;
+  const runtime::ShardState& previous;
   std::uint64_t successor_generation = 0;
-  std::shared_ptr<const RealtimeDeltaAtomicTable> rebase_realtime;
-  std::shared_ptr<const OwnedSnapshotBacking> full_backing;
+  std::shared_ptr<const store::RealtimeDeltaAtomicTable> rebase_realtime;
+  std::shared_ptr<const store::OwnedSnapshotBacking> full_backing;
 };
 
-StatusOr<std::shared_ptr<const OwnedSnapshotBacking>> BuildRebasedFullSnapshot(
+StatusOr<std::shared_ptr<const store::OwnedSnapshotBacking>> BuildRebasedFullSnapshot(
     const FullRebaseBuildRequest& request);
 
-StatusOr<std::shared_ptr<const ShardState>> FinishFullRebase(
+StatusOr<std::shared_ptr<const runtime::ShardState>> FinishFullRebase(
     FinishFullRebaseRequest request);
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::rebuild
 
 #endif  // KV_INDEX_SRC_REBUILD_FULL_REBASE_H_

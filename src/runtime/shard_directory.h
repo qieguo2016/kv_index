@@ -8,7 +8,7 @@
 #include "kv_index/status.h"
 #include "src/runtime/shard_state.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::runtime {
 
 class ShardDirectory {
  public:
@@ -26,6 +26,6 @@ class ShardDirectory {
   std::vector<std::shared_ptr<const ShardState>> shards_;
 };
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::runtime
 
 #endif  // KV_INDEX_SRC_RUNTIME_SHARD_DIRECTORY_H_

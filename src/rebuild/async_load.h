@@ -11,10 +11,10 @@
 #include "src/store/realtime_delta.h"
 #include "src/runtime/shard_state.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::rebuild {
 
 using PublishShardFn = std::function<Status(
-    std::uint32_t, std::shared_ptr<const ShardState>)>;
+    std::uint32_t, std::shared_ptr<const runtime::ShardState>)>;
 using StoreLoadStateFn = std::function<void(const LoadState&)>;
 using IsLoadCancelledFn = std::function<bool()>;
 
@@ -25,7 +25,7 @@ struct AsyncCatchUpRequest {
   std::uint64_t hash_seed = 0;
   std::uint32_t hash_version = 1;
   std::shared_ptr<const CompiledRowLayout> layout;
-  std::vector<std::shared_ptr<RealtimeDeltaAtomicTable>> realtime_shards;
+  std::vector<std::shared_ptr<store::RealtimeDeltaAtomicTable>> realtime_shards;
   std::shared_ptr<std::atomic_bool> cancellation_requested;
 };
 
@@ -57,6 +57,6 @@ Status RunExternalArtifactLoad(const LoadRequest& request, LoadId id,
                                AsyncLoadCallbacks callbacks,
                                LoadState* state);
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::rebuild
 
 #endif  // KV_INDEX_SRC_REBUILD_ASYNC_LOAD_H_

@@ -13,7 +13,7 @@
 #include "kv_index/types.h"
 #include "src/store/realtime_delta.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::ingest {
 
 enum class UpdateGenerationRole : std::uint8_t {
   kActive = 1,
@@ -29,7 +29,7 @@ struct UpdateTargetRoute {
   std::uint64_t hash_seed = 0;
   std::uint32_t hash_version = 1;
   std::shared_ptr<const CompiledRowLayout> layout;
-  std::vector<std::shared_ptr<RealtimeDeltaAtomicTable>> realtime_shards;
+  std::vector<std::shared_ptr<store::RealtimeDeltaAtomicTable>> realtime_shards;
 };
 
 struct UpdateApplierOptions {
@@ -48,6 +48,6 @@ class UpdateApplier {
   UpdateApplierOptions options_;
 };
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::ingest
 
 #endif  // KV_INDEX_SRC_INGEST_UPDATE_APPLIER_H_

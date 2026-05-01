@@ -17,7 +17,7 @@
 
 namespace {
 
-namespace storage = kv_index::internal;
+namespace storage = kv_index::internal::model;
 
 using kv_index::CompiledRowLayout;
 using kv_index::FieldEncoding;
@@ -25,9 +25,9 @@ using kv_index::FieldSpec;
 using kv_index::FieldType;
 using kv_index::RuntimeSchema;
 using kv_index::StatusCode;
-using kv_index::core::ArtifactSectionType;
-using kv_index::core::ArtifactValidationOptions;
-using kv_index::core::ParseArtifact;
+using kv_index::internal::artifact::ArtifactSectionType;
+using kv_index::internal::artifact::ArtifactValidationOptions;
+using kv_index::internal::artifact::ParseArtifact;
 using kv_index::test_support::ArtifactShardSpec;
 using kv_index::test_support::TestArtifactSpec;
 using kv_index::test_support::TestSourceProgress;

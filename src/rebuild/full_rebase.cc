@@ -6,11 +6,11 @@
 
 #include "src/store/frozen_primary_key_index.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::rebuild {
 namespace {
 
-Status CheckSameLayout(const SnapshotBacking& lhs,
-                       const SnapshotBacking& rhs) {
+Status CheckSameLayout(const store::SnapshotBacking& lhs,
+                       const store::SnapshotBacking& rhs) {
   if (lhs.layout() == nullptr || rhs.layout() == nullptr) {
     return Status::FailedPrecondition("rebase snapshot has no row layout");
   }
@@ -21,12 +21,12 @@ Status CheckSameLayout(const SnapshotBacking& lhs,
     return Status::FailedPrecondition(
         "compact and full snapshots have different row layouts");
   }
-  auto lhs_index = FrozenPrimaryKeyIndexView::Validate(
+  auto lhs_index = store::FrozenPrimaryKeyIndexView::Validate(
       lhs.frozen_index_bytes());
   if (!lhs_index.ok()) {
     return lhs_index.status();
   }
-  auto rhs_index = FrozenPrimaryKeyIndexView::Validate(
+  auto rhs_index = store::FrozenPrimaryKeyIndexView::Validate(
       rhs.frozen_index_bytes());
   if (!rhs_index.ok()) {
     return rhs_index.status();
@@ -43,10 +43,10 @@ Status CheckSameLayout(const SnapshotBacking& lhs,
   return Status::Ok();
 }
 
-Status AddRowIfNew(SnapshotBuilder* builder,
+Status AddRowIfNew(store::SnapshotBuilder* builder,
                    std::unordered_set<std::uint64_t>* seen,
                    std::uint64_t primary_key,
-                   internal::EncodedRow encoded) {
+                   internal::model::EncodedRow encoded) {
   if (builder == nullptr || seen == nullptr) {
     return Status::InvalidArgument("rebase row sink is null");
   }
@@ -56,8 +56,8 @@ Status AddRowIfNew(SnapshotBuilder* builder,
   return builder->AddRow(primary_key, std::move(encoded));
 }
 
-Status EnsurePreviousRealtimeIsEmpty(const ShardState& previous) {
-  const std::shared_ptr<const RealtimeDeltaAtomicTable>& realtime =
+Status EnsurePreviousRealtimeIsEmpty(const runtime::ShardState& previous) {
+  const std::shared_ptr<const store::RealtimeDeltaAtomicTable>& realtime =
       previous.realtime_delta();
   if (realtime == nullptr) {
     return Status::Ok();
@@ -77,7 +77,7 @@ Status EnsurePreviousRealtimeIsEmpty(const ShardState& previous) {
 
 }  // namespace
 
-StatusOr<std::shared_ptr<const OwnedSnapshotBacking>> BuildRebasedFullSnapshot(
+StatusOr<std::shared_ptr<const store::OwnedSnapshotBacking>> BuildRebasedFullSnapshot(
     const FullRebaseBuildRequest& request) {
   if (request.external_async_load_active) {
     return Status::FailedPrecondition(
@@ -88,7 +88,7 @@ StatusOr<std::shared_ptr<const OwnedSnapshotBacking>> BuildRebasedFullSnapshot(
     return Status::FailedPrecondition("full rebase requires a full snapshot");
   }
 
-  const std::shared_ptr<const SnapshotBacking>& full_backing =
+  const std::shared_ptr<const store::SnapshotBacking>& full_backing =
       request.state.full_snapshot()->backing();
   if (request.state.compact_delta().has_value()) {
     const auto& compact = request.state.compact_delta().value();
@@ -102,7 +102,7 @@ StatusOr<std::shared_ptr<const OwnedSnapshotBacking>> BuildRebasedFullSnapshot(
     }
   }
 
-  SnapshotBuilder builder(full_backing->layout(), request.build_options);
+  store::SnapshotBuilder builder(full_backing->layout(), request.build_options);
   std::unordered_set<std::uint64_t> seen;
 
   if (request.state.compact_delta().has_value()) {
@@ -112,7 +112,7 @@ StatusOr<std::shared_ptr<const OwnedSnapshotBacking>> BuildRebasedFullSnapshot(
       return compact_rows.status();
     }
     seen.reserve(compact_rows->size());
-    for (SnapshotRow& row : compact_rows.value()) {
+    for (store::SnapshotRow& row : compact_rows.value()) {
       if (const Status status =
               AddRowIfNew(&builder, &seen, row.primary_key,
                           std::move(row.encoded));
@@ -127,7 +127,7 @@ StatusOr<std::shared_ptr<const OwnedSnapshotBacking>> BuildRebasedFullSnapshot(
     return full_rows.status();
   }
   seen.reserve(seen.size() + full_rows->size());
-  for (SnapshotRow& row : full_rows.value()) {
+  for (store::SnapshotRow& row : full_rows.value()) {
     if (const Status status =
             AddRowIfNew(&builder, &seen, row.primary_key,
                         std::move(row.encoded));
@@ -139,7 +139,7 @@ StatusOr<std::shared_ptr<const OwnedSnapshotBacking>> BuildRebasedFullSnapshot(
   return builder.Seal();
 }
 
-StatusOr<std::shared_ptr<const ShardState>> FinishFullRebase(
+StatusOr<std::shared_ptr<const runtime::ShardState>> FinishFullRebase(
     FinishFullRebaseRequest request) {
   if (request.full_backing == nullptr) {
     return Status::InvalidArgument("rebased full backing is null");
@@ -148,12 +148,12 @@ StatusOr<std::shared_ptr<const ShardState>> FinishFullRebase(
       !status.ok()) {
     return status;
   }
-  return std::make_shared<const ShardState>(
+  return std::make_shared<const runtime::ShardState>(
       request.previous.ShardId(), request.successor_generation,
-      ShardState::Layers{
+      runtime::ShardState::Layers{
           .realtime_delta = std::move(request.rebase_realtime),
-          .full_snapshot = FullSnapshotView(std::move(request.full_backing)),
+          .full_snapshot = store::FullSnapshotView(std::move(request.full_backing)),
       });
 }
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::rebuild

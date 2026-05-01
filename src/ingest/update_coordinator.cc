@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-namespace kv_index::core {
+namespace kv_index::internal::ingest {
 namespace {
 
 using PartitionKey = std::pair<std::string, std::int32_t>;
@@ -128,4 +128,4 @@ Status UpdateCoordinator::PollApplyCommitOnce() {
   return consumer_->Commit(checkpoint.value());
 }
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::ingest

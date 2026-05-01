@@ -17,7 +17,7 @@
 #include "src/ingest/update_applier.h"
 #include "src/ingest/update_coordinator.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::rebuild {
 namespace {
 
 std::mutex& CatchUpFactoryMutex() {
@@ -35,10 +35,10 @@ bool SamePartition(const KafkaPartition& lhs, const KafkaPartition& rhs) {
 }
 
 KafkaCheckpoint BuildCheckpoint(
-    const std::vector<ArtifactSourceProgress>& progress) {
+    const std::vector<artifact::ArtifactSourceProgress>& progress) {
   KafkaCheckpoint checkpoint;
   checkpoint.next_offsets.reserve(progress.size());
-  for (const ArtifactSourceProgress& entry : progress) {
+  for (const artifact::ArtifactSourceProgress& entry : progress) {
     checkpoint.next_offsets.push_back(KafkaPosition{
         .partition =
             KafkaPartition{.topic = entry.topic, .partition = entry.partition},
@@ -49,10 +49,10 @@ KafkaCheckpoint BuildCheckpoint(
 }
 
 KafkaProgress BuildSafeProgress(
-    const std::vector<ArtifactSourceProgress>& progress) {
+    const std::vector<artifact::ArtifactSourceProgress>& progress) {
   KafkaProgress safe_progress;
   safe_progress.partitions.reserve(progress.size());
-  for (const ArtifactSourceProgress& entry : progress) {
+  for (const artifact::ArtifactSourceProgress& entry : progress) {
     safe_progress.partitions.push_back(KafkaPartitionProgress{
         .partition =
             KafkaPartition{.topic = entry.topic, .partition = entry.partition},
@@ -129,10 +129,10 @@ void MarkCancelled(LoadState* state) {
 }
 
 void PopulateSourceProgress(
-    LoadState* state, const std::vector<ArtifactSourceProgress>& progress) {
+    LoadState* state, const std::vector<artifact::ArtifactSourceProgress>& progress) {
   state->source_progress.partitions.clear();
   state->source_progress.partitions.reserve(progress.size());
-  for (const ArtifactSourceProgress& entry : progress) {
+  for (const artifact::ArtifactSourceProgress& entry : progress) {
     state->source_progress.partitions.push_back(KafkaPartitionProgress{
         .partition =
             KafkaPartition{.topic = entry.topic, .partition = entry.partition},
@@ -163,14 +163,14 @@ Status CheckCancelled(const AsyncLoadCallbacks& callbacks, LoadState* state) {
   return Status::Ok();
 }
 
-std::vector<std::shared_ptr<RealtimeDeltaAtomicTable>> CreateRealtimeShards(
+std::vector<std::shared_ptr<store::RealtimeDeltaAtomicTable>> CreateRealtimeShards(
     const std::shared_ptr<const CompiledRowLayout>& layout,
     const ForwardIndexOptions& options) {
-  std::vector<std::shared_ptr<RealtimeDeltaAtomicTable>> shards;
+  std::vector<std::shared_ptr<store::RealtimeDeltaAtomicTable>> shards;
   shards.reserve(options.shard_count);
   for (std::uint32_t shard_id = 0; shard_id < options.shard_count; ++shard_id) {
-    shards.push_back(std::make_shared<RealtimeDeltaAtomicTable>(
-        RealtimeDeltaAtomicTable::Options{
+    shards.push_back(std::make_shared<store::RealtimeDeltaAtomicTable>(
+        store::RealtimeDeltaAtomicTable::Options{
             .layout = layout,
             .capacity = 1024,
             .hash_seed = options.hash_seed,
@@ -182,7 +182,7 @@ std::vector<std::shared_ptr<RealtimeDeltaAtomicTable>> CreateRealtimeShards(
 
 class ProductionCatchUpRunner final : public AsyncCatchUpRunner {
  public:
-  explicit ProductionCatchUpRunner(KafkaUpdateConsumer consumer)
+  explicit ProductionCatchUpRunner(ingest::KafkaUpdateConsumer consumer)
       : consumer_(std::move(consumer)) {}
 
   Status Start(const AsyncCatchUpRequest& request) override {
@@ -196,11 +196,11 @@ class ProductionCatchUpRunner final : public AsyncCatchUpRunner {
     }
     const std::string& logical_topic =
         request_.safe_progress.partitions.front().partition.topic;
-    applier_ = std::make_unique<UpdateApplier>(UpdateApplierOptions{
+    applier_ = std::make_unique<ingest::UpdateApplier>(ingest::UpdateApplierOptions{
         .logical_topic = logical_topic,
         .targets =
-            {UpdateTargetRoute{
-                .role = UpdateGenerationRole::kRebuild,
+            {ingest::UpdateTargetRoute{
+                .role = ingest::UpdateGenerationRole::kRebuild,
                 .generation_id = request_.load_id,
                 .shard_count = request_.realtime_shards.size(),
                 .hash_seed = request_.hash_seed,
@@ -209,9 +209,9 @@ class ProductionCatchUpRunner final : public AsyncCatchUpRunner {
                 .realtime_shards = request_.realtime_shards,
             }},
     });
-    coordinator_ = std::make_unique<UpdateCoordinator>(
+    coordinator_ = std::make_unique<ingest::UpdateCoordinator>(
         &consumer_, applier_.get(),
-        UpdateCoordinatorOptions{
+        ingest::UpdateCoordinatorOptions{
             .logical_topic = logical_topic,
             .poll_options = PollOptions{.timeout_ms = 100, .max_messages = 128},
         });
@@ -237,10 +237,10 @@ class ProductionCatchUpRunner final : public AsyncCatchUpRunner {
   }
 
  private:
-  KafkaUpdateConsumer consumer_;
+  ingest::KafkaUpdateConsumer consumer_;
   AsyncCatchUpRequest request_;
-  std::unique_ptr<UpdateApplier> applier_;
-  std::unique_ptr<UpdateCoordinator> coordinator_;
+  std::unique_ptr<ingest::UpdateApplier> applier_;
+  std::unique_ptr<ingest::UpdateCoordinator> coordinator_;
 };
 
 StatusOr<std::unique_ptr<AsyncCatchUpRunner>> CreateCatchUpRunner(
@@ -259,7 +259,7 @@ StatusOr<std::unique_ptr<AsyncCatchUpRunner>> CreateCatchUpRunner(
         "catch-up required but no production Kafka consumer can be started");
   }
 
-  auto consumer = KafkaUpdateConsumer::Create(options.kafka_consumer);
+  auto consumer = ingest::KafkaUpdateConsumer::Create(options.kafka_consumer);
   if (!consumer.ok()) {
     return consumer.status();
   }
@@ -308,12 +308,12 @@ Status RunExternalArtifactLoad(const LoadRequest& request, LoadId id,
     return status;
   }
 
-  const MmapSnapshotLoadOptions load_options{
+  const artifact::MmapSnapshotLoadOptions load_options{
       .expected_shard_count = options.shard_count,
       .expected_hash_seed = options.hash_seed,
       .expected_hash_version = options.hash_version,
   };
-  std::vector<std::shared_ptr<MmapSnapshotBacking>> backings;
+  std::vector<std::shared_ptr<artifact::MmapSnapshotBacking>> backings;
   backings.reserve(options.shard_count);
   state->total_shard_count = options.shard_count;
   state->shards.reserve(options.shard_count);
@@ -326,7 +326,7 @@ Status RunExternalArtifactLoad(const LoadRequest& request, LoadId id,
       return status;
     }
     auto backing =
-        MmapSnapshotBacking::LoadShard(request.artifact_uri, shard_id,
+        artifact::MmapSnapshotBacking::LoadShard(request.artifact_uri, shard_id,
                                        load_options);
     if (!backing.ok()) {
       MarkFailed(state, backing.status());
@@ -362,7 +362,7 @@ Status RunExternalArtifactLoad(const LoadRequest& request, LoadId id,
 
   const KafkaProgress artifact_progress =
       BuildSafeProgress(backings.front()->artifact().source_progress);
-  std::vector<std::shared_ptr<RealtimeDeltaAtomicTable>> realtime_shards;
+  std::vector<std::shared_ptr<store::RealtimeDeltaAtomicTable>> realtime_shards;
   if (artifact_progress.partitions.empty()) {
     const Status status =
         Status::FailedPrecondition("artifact source progress is empty");
@@ -459,16 +459,16 @@ Status RunExternalArtifactLoad(const LoadRequest& request, LoadId id,
       return status;
     }
     auto full_backing =
-        std::static_pointer_cast<const SnapshotBacking>(backings[shard_id]);
-    std::shared_ptr<const RealtimeDeltaAtomicTable> realtime_delta;
+        std::static_pointer_cast<const store::SnapshotBacking>(backings[shard_id]);
+    std::shared_ptr<const store::RealtimeDeltaAtomicTable> realtime_delta;
     if (!realtime_shards.empty()) {
       realtime_delta = realtime_shards[shard_id];
     }
-    auto shard_state = std::make_shared<const ShardState>(
+    auto shard_state = std::make_shared<const runtime::ShardState>(
         shard_id, id,
-        ShardState::Layers{
+        runtime::ShardState::Layers{
             .realtime_delta = std::move(realtime_delta),
-            .full_snapshot = FullSnapshotView(std::move(full_backing)),
+            .full_snapshot = store::FullSnapshotView(std::move(full_backing)),
         });
     const Status status =
         callbacks.publish_shard(shard_id, std::move(shard_state));
@@ -489,4 +489,4 @@ Status RunExternalArtifactLoad(const LoadRequest& request, LoadId id,
   return Status::Ok();
 }
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::rebuild

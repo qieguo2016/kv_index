@@ -2,7 +2,7 @@
 
 #include "kv_index/forward_index.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::base {
 
 namespace {
 
@@ -22,13 +22,13 @@ std::uint64_t StableHash64(std::uint64_t primary_key, std::uint64_t seed,
   return SplitMix64(primary_key ^ seed ^ version_mix);
 }
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::base
 
 namespace kv_index {
 
 std::uint64_t StableHash64(std::uint64_t primary_key, std::uint64_t seed,
                            std::uint32_t version) noexcept {
-  return core::StableHash64(primary_key, seed, version);
+  return internal::base::StableHash64(primary_key, seed, version);
 }
 
 }  // namespace kv_index

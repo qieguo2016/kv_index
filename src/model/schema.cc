@@ -281,7 +281,7 @@ StatusOr<CompiledRowLayout> CompiledRowLayout::Compile(
             });
 
   layout.presence_bitmap_bytes_ =
-      internal::AlignUp((active_fields.size() + 7U) / 8U, 8U);
+      internal::base::AlignUp((active_fields.size() + 7U) / 8U, 8U);
   layout.fixed_area_offset_ = layout.presence_bitmap_bytes_;
 
   layout.fields_.reserve(active_fields.size());
@@ -307,12 +307,12 @@ StatusOr<CompiledRowLayout> CompiledRowLayout::Compile(
     if (field.uses_ref) {
       continue;
     }
-    fixed_cursor = internal::AlignUp(fixed_cursor, FieldTypeAlignment(field.type));
+    fixed_cursor = internal::base::AlignUp(fixed_cursor, FieldTypeAlignment(field.type));
     field.slot_offset = fixed_cursor;
     fixed_cursor += field.value_width;
   }
 
-  layout.ref_area_offset_ = internal::AlignUp(fixed_cursor, 8U);
+  layout.ref_area_offset_ = internal::base::AlignUp(fixed_cursor, 8U);
   std::size_t ref_cursor = layout.ref_area_offset_;
   for (FieldLayout& field : layout.fields_) {
     if (!field.uses_ref) {
@@ -322,7 +322,7 @@ StatusOr<CompiledRowLayout> CompiledRowLayout::Compile(
     ref_cursor += kValueRef16Size;
   }
 
-  layout.row_slot_size_ = internal::AlignUp(ref_cursor, 8U);
+  layout.row_slot_size_ = internal::base::AlignUp(ref_cursor, 8U);
   layout.layout_fingerprint_ = BuildFingerprint(layout);
   return layout;
 }

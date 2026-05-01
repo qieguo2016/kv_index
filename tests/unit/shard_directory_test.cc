@@ -10,8 +10,8 @@
 namespace {
 
 using kv_index::StatusCode;
-using kv_index::core::ShardDirectory;
-using kv_index::core::ShardState;
+using kv_index::internal::runtime::ShardDirectory;
+using kv_index::internal::runtime::ShardState;
 
 std::shared_ptr<const ShardState> MakeState(std::uint32_t shard_id,
                                             std::uint64_t generation) {

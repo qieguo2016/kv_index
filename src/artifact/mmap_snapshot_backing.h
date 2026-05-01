@@ -12,7 +12,7 @@
 #include "src/artifact/artifact_format.h"
 #include "src/store/snapshot.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::artifact {
 
 struct MmapSnapshotLoadOptions {
   std::uint32_t expected_shard_count = 0;
@@ -20,7 +20,7 @@ struct MmapSnapshotLoadOptions {
   std::uint32_t expected_hash_version = 0;
 };
 
-class MmapSnapshotBacking final : public SnapshotBacking {
+class MmapSnapshotBacking final : public store::SnapshotBacking {
  public:
   MmapSnapshotBacking(const MmapSnapshotBacking&) = delete;
   MmapSnapshotBacking& operator=(const MmapSnapshotBacking&) = delete;
@@ -38,7 +38,7 @@ class MmapSnapshotBacking final : public SnapshotBacking {
     return frozen_index_bytes_;
   }
   std::uint64_t row_count() const noexcept override { return row_count_; }
-  StatusOr<internal::EncodedRow> EncodedRowAt(
+  StatusOr<internal::model::EncodedRow> EncodedRowAt(
       std::uint64_t row_offset) const override;
 
   Status Prewarm();
@@ -70,6 +70,6 @@ class MmapSnapshotBacking final : public SnapshotBacking {
   std::size_t prewarm_touched_pages_ = 0;
 };
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::artifact
 
 #endif  // KV_INDEX_SRC_ARTIFACT_MMAP_SNAPSHOT_BACKING_H_

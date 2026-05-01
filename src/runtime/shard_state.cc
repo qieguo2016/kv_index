@@ -6,7 +6,7 @@
 
 #include "src/artifact/mmap_snapshot_backing.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::runtime {
 namespace {
 
 void CopyLayoutMetadata(const std::shared_ptr<const CompiledRowLayout>& layout,
@@ -103,7 +103,7 @@ ShardRuntimeStatus ShardState::GetRuntimeStatus() const {
     if (backing != nullptr) {
       status.full_row_count = backing->row_count();
       CopyLayoutMetadata(backing->layout(), &status);
-      if (const auto* mmap = dynamic_cast<const MmapSnapshotBacking*>(
+      if (const auto* mmap = dynamic_cast<const artifact::MmapSnapshotBacking*>(
               backing.get());
           mmap != nullptr) {
         status.artifact_id = mmap->artifact().artifact_id;
@@ -114,4 +114,4 @@ ShardRuntimeStatus ShardState::GetRuntimeStatus() const {
   return status;
 }
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::runtime

@@ -15,12 +15,12 @@
 #include "kv_index/types.h"
 #include "src/model/row_storage.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::store {
 
 struct RealtimeRowRef {
   std::uint64_t primary_key = 0;
   SourcePosition position;
-  std::shared_ptr<const internal::EncodedRow> encoded;
+  std::shared_ptr<const internal::model::EncodedRow> encoded;
   std::uint64_t row_slot_bytes = 0;
   std::uint64_t payload_pool_bytes = 0;
   bool sealed_visible = false;
@@ -33,7 +33,7 @@ struct RealtimeDeltaBoundary {
 struct RealtimeVisibleRow {
   std::uint64_t primary_key = 0;
   SourcePosition position;
-  std::shared_ptr<const internal::EncodedRow> encoded;
+  std::shared_ptr<const internal::model::EncodedRow> encoded;
 };
 
 class RealtimeAtomicHashMap {
@@ -104,7 +104,7 @@ class RealtimeDeltaAtomicTable {
   RealtimeDeltaAtomicTable& operator=(const RealtimeDeltaAtomicTable&) = delete;
 
   Status Publish(std::uint64_t primary_key, SourcePosition position,
-                 internal::EncodedRow encoded);
+                 internal::model::EncodedRow encoded);
   StatusOr<std::optional<Row>> Get(std::uint64_t primary_key) const;
 
   RealtimeDeltaBoundary CaptureCompactionBoundary() const;
@@ -120,7 +120,7 @@ class RealtimeDeltaAtomicTable {
  private:
   StatusOr<std::unique_ptr<RealtimeRowRef>> BuildRowRef(
       std::uint64_t primary_key, SourcePosition position,
-      internal::EncodedRow encoded) const;
+      internal::model::EncodedRow encoded) const;
 
   std::shared_ptr<const CompiledRowLayout> layout_;
   RealtimeAtomicHashMap map_;
@@ -130,6 +130,6 @@ class RealtimeDeltaAtomicTable {
   std::atomic<std::uint64_t> payload_pool_bytes_ = 0;
 };
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::store
 
 #endif  // KV_INDEX_SRC_STORE_REALTIME_DELTA_H_

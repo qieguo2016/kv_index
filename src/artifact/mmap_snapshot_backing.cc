@@ -16,10 +16,10 @@
 
 #include "src/base/byte_io.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::artifact {
 namespace {
 
-using kv_index::internal::ReadLittleEndian;
+using kv_index::internal::base::ReadLittleEndian;
 
 StatusOr<std::string> ResolveLocalPath(const std::string& artifact_uri) {
   const std::string file_prefix = "file://";
@@ -100,7 +100,7 @@ StatusOr<std::vector<std::string>> ReadStringList(
   return values;
 }
 
-StatusOr<OwnedSnapshotRowPayload> ReadPayloadAt(
+StatusOr<store::OwnedSnapshotRowPayload> ReadPayloadAt(
     std::span<const std::byte> bytes, std::uint64_t wanted_index) {
   std::size_t offset = 0;
   auto row_count = ReadLittleEndian<std::uint64_t>(bytes, offset);
@@ -112,7 +112,7 @@ StatusOr<OwnedSnapshotRowPayload> ReadPayloadAt(
     return Status::InvalidArgument("mmap row payload index is out of bounds");
   }
   for (std::uint64_t row_index = 0; row_index < *row_count; ++row_index) {
-    OwnedSnapshotRowPayload payload;
+    store::OwnedSnapshotRowPayload payload;
     auto arena = ReadBlob(bytes, &offset);
     if (!arena.ok()) {
       return arena.status();
@@ -342,7 +342,7 @@ StatusOr<std::shared_ptr<MmapSnapshotBacking>> MmapSnapshotBacking::LoadShard(
       *row_slots, *row_payloads, std::move(prewarm_sections)));
 }
 
-StatusOr<internal::EncodedRow> MmapSnapshotBacking::EncodedRowAt(
+StatusOr<internal::model::EncodedRow> MmapSnapshotBacking::EncodedRowAt(
     std::uint64_t row_offset) const {
   if (layout() == nullptr) {
     return Status::FailedPrecondition("mmap snapshot has no row layout");
@@ -366,7 +366,7 @@ StatusOr<internal::EncodedRow> MmapSnapshotBacking::EncodedRowAt(
   if (!payload.ok()) {
     return payload.status();
   }
-  return internal::EncodedRow{
+  return internal::model::EncodedRow{
       .schema_version = layout()->schema_version(),
       .layout_fingerprint = layout()->layout_fingerprint(),
       .row_slot = std::vector<std::byte>(row_slot_bytes_.begin() + offset,
@@ -391,4 +391,4 @@ Status MmapSnapshotBacking::Prewarm() {
   return Status::Ok();
 }
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::artifact

@@ -10,27 +10,27 @@
 #include "src/store/snapshot.h"
 #include "src/store/snapshot_builder.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::rebuild {
 
 struct CompactionBuildRequest {
-  const ShardState& state;
-  RealtimeDeltaBoundary boundary;
-  SnapshotBuildOptions build_options = {};
+  const runtime::ShardState& state;
+  store::RealtimeDeltaBoundary boundary;
+  store::SnapshotBuildOptions build_options = {};
 };
 
 struct FinishDeltaCompactionRequest {
-  const ShardState& previous;
+  const runtime::ShardState& previous;
   std::uint64_t successor_generation = 0;
-  std::shared_ptr<const RealtimeDeltaAtomicTable> successor_realtime;
-  std::shared_ptr<const OwnedSnapshotBacking> compact_backing;
+  std::shared_ptr<const store::RealtimeDeltaAtomicTable> successor_realtime;
+  std::shared_ptr<const store::OwnedSnapshotBacking> compact_backing;
 };
 
-StatusOr<std::shared_ptr<const OwnedSnapshotBacking>>
+StatusOr<std::shared_ptr<const store::OwnedSnapshotBacking>>
 BuildCompactedDeltaSnapshot(const CompactionBuildRequest& request);
 
-StatusOr<std::shared_ptr<const ShardState>> FinishDeltaCompaction(
+StatusOr<std::shared_ptr<const runtime::ShardState>> FinishDeltaCompaction(
     FinishDeltaCompactionRequest request);
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::rebuild
 
 #endif  // KV_INDEX_SRC_REBUILD_COMPACTION_H_

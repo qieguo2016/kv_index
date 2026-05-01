@@ -10,12 +10,12 @@
 #include "src/runtime/shard_directory.h"
 #include "src/runtime/shard_state.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::testing {
 
 class ForwardIndexTestPeer {
  public:
   static Status PublishShard(ForwardIndex& index,
-                             std::shared_ptr<const ShardState> state) {
+                             std::shared_ptr<const runtime::ShardState> state) {
     if (state == nullptr) {
       return Status::InvalidArgument("published shard state must not be null");
     }
@@ -23,7 +23,7 @@ class ForwardIndexTestPeer {
   }
 
   static Status PublishShard(ForwardIndex& index, std::uint32_t shard_id,
-                             std::shared_ptr<const ShardState> state) {
+                             std::shared_ptr<const runtime::ShardState> state) {
     if (index.shard_directory_ == nullptr) {
       return Status::FailedPrecondition(
           "forward index has no shard directory");
@@ -31,7 +31,7 @@ class ForwardIndexTestPeer {
     return index.shard_directory_->Publish(shard_id, std::move(state));
   }
 
-  static StatusOr<std::shared_ptr<const ShardState>> LoadShard(
+  static StatusOr<std::shared_ptr<const runtime::ShardState>> LoadShard(
       const ForwardIndex& index, std::uint32_t shard_id) {
     if (index.shard_directory_ == nullptr) {
       return Status::FailedPrecondition(
@@ -41,6 +41,6 @@ class ForwardIndexTestPeer {
   }
 };
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::testing
 
 #endif  // KV_INDEX_SRC_TESTING_TEST_PEER_H_

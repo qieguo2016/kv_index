@@ -15,7 +15,7 @@ using kv_index::CompiledRowLayout;
 using kv_index::FieldEncoding;
 using kv_index::FieldSpec;
 using kv_index::FieldType;
-namespace storage = kv_index::internal;
+namespace storage = kv_index::internal::model;
 
 std::shared_ptr<const CompiledRowLayout> Layout() {
   kv_index::RuntimeSchema schema(1003);
@@ -39,7 +39,7 @@ storage::EncodedRow Row(const CompiledRowLayout& layout, std::int32_t score) {
 
 int main() {
   auto layout = Layout();
-  kv_index::core::SnapshotBuilder builder(layout);
+  kv_index::internal::store::SnapshotBuilder builder(layout);
   for (std::uint64_t key = 1; key <= 4096; ++key) {
     (void)builder.AddRow(key, Row(*layout, static_cast<std::int32_t>(key)));
   }
@@ -49,7 +49,7 @@ int main() {
   std::uint64_t checksum = 0;
   const auto start = std::chrono::steady_clock::now();
   for (std::uint64_t i = 0; i < kIterations; ++i) {
-    auto rows = kv_index::core::EnumerateSnapshotRows(*backing).value();
+    auto rows = kv_index::internal::store::EnumerateSnapshotRows(*backing).value();
     checksum += rows.size();
   }
   const auto elapsed = std::chrono::steady_clock::now() - start;

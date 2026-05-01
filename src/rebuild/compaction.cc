@@ -4,11 +4,11 @@
 #include <unordered_set>
 #include <utility>
 
-namespace kv_index::core {
+namespace kv_index::internal::rebuild {
 namespace {
 
 StatusOr<std::shared_ptr<const CompiledRowLayout>> ResolveLayout(
-    const ShardState& state) {
+    const runtime::ShardState& state) {
   if (state.realtime_delta() != nullptr &&
       state.realtime_delta()->layout() != nullptr) {
     return state.realtime_delta()->layout();
@@ -24,10 +24,10 @@ StatusOr<std::shared_ptr<const CompiledRowLayout>> ResolveLayout(
   return Status::FailedPrecondition("compaction state has no row layout");
 }
 
-Status AddRowIfNew(SnapshotBuilder* builder,
+Status AddRowIfNew(store::SnapshotBuilder* builder,
                    std::unordered_set<std::uint64_t>* seen,
                    std::uint64_t primary_key,
-                   internal::EncodedRow encoded) {
+                   internal::model::EncodedRow encoded) {
   if (builder == nullptr || seen == nullptr) {
     return Status::InvalidArgument("compaction row sink is null");
   }
@@ -39,14 +39,14 @@ Status AddRowIfNew(SnapshotBuilder* builder,
 
 }  // namespace
 
-StatusOr<std::shared_ptr<const OwnedSnapshotBacking>>
+StatusOr<std::shared_ptr<const store::OwnedSnapshotBacking>>
 BuildCompactedDeltaSnapshot(const CompactionBuildRequest& request) {
   auto layout = ResolveLayout(request.state);
   if (!layout.ok()) {
     return layout.status();
   }
 
-  SnapshotBuilder builder(layout.value(), request.build_options);
+  store::SnapshotBuilder builder(layout.value(), request.build_options);
   std::unordered_set<std::uint64_t> seen;
 
   if (request.state.realtime_delta() != nullptr) {
@@ -56,7 +56,7 @@ BuildCompactedDeltaSnapshot(const CompactionBuildRequest& request) {
       return rows.status();
     }
     seen.reserve(rows->size());
-    for (const RealtimeVisibleRow& row : rows.value()) {
+    for (const store::RealtimeVisibleRow& row : rows.value()) {
       if (row.encoded == nullptr) {
         return Status::Internal("compaction realtime row has no encoded row");
       }
@@ -78,7 +78,7 @@ BuildCompactedDeltaSnapshot(const CompactionBuildRequest& request) {
       return rows.status();
     }
     seen.reserve(seen.size() + rows->size());
-    for (SnapshotRow& row : rows.value()) {
+    for (store::SnapshotRow& row : rows.value()) {
       if (const Status status =
               AddRowIfNew(&builder, &seen, row.primary_key,
                           std::move(row.encoded));
@@ -91,19 +91,19 @@ BuildCompactedDeltaSnapshot(const CompactionBuildRequest& request) {
   return builder.Seal();
 }
 
-StatusOr<std::shared_ptr<const ShardState>> FinishDeltaCompaction(
+StatusOr<std::shared_ptr<const runtime::ShardState>> FinishDeltaCompaction(
     FinishDeltaCompactionRequest request) {
   if (request.compact_backing == nullptr) {
     return Status::InvalidArgument("compaction compact backing is null");
   }
-  return std::make_shared<const ShardState>(
+  return std::make_shared<const runtime::ShardState>(
       request.previous.ShardId(), request.successor_generation,
-      ShardState::Layers{
+      runtime::ShardState::Layers{
           .realtime_delta = std::move(request.successor_realtime),
-          .compact_delta = CompactDeltaSnapshot(
+          .compact_delta = store::CompactDeltaSnapshot(
               std::move(request.compact_backing)),
           .full_snapshot = request.previous.full_snapshot(),
       });
 }
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::rebuild

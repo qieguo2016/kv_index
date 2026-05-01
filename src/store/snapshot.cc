@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-namespace kv_index::core {
+namespace kv_index::internal::store {
 namespace {
 
 StatusOr<FrozenPrimaryKeyIndexView> ValidateBackingIndex(
@@ -31,7 +31,7 @@ OwnedSnapshotBacking::OwnedSnapshotBacking(
       row_slot_bytes_(std::move(row_slot_bytes)),
       row_payloads_(std::move(row_payloads)) {}
 
-StatusOr<internal::EncodedRow> OwnedSnapshotBacking::EncodedRowAt(
+StatusOr<internal::model::EncodedRow> OwnedSnapshotBacking::EncodedRowAt(
     std::uint64_t row_offset) const {
   if (layout_ == nullptr) {
     return Status::FailedPrecondition("snapshot backing has no row layout");
@@ -57,7 +57,7 @@ StatusOr<internal::EncodedRow> OwnedSnapshotBacking::EncodedRowAt(
   }
 
   const OwnedSnapshotRowPayload& payload = row_payloads_[row_index];
-  return internal::EncodedRow{
+  return internal::model::EncodedRow{
       .schema_version = layout_->schema_version(),
       .layout_fingerprint = layout_->layout_fingerprint(),
       .row_slot =
@@ -119,7 +119,7 @@ StatusOr<std::optional<Row>> ImmutableRowSnapshotView::Get(
   if (!encoded.ok()) {
     return encoded.status();
   }
-  auto row = internal::MaterializeRow(backing_->layout(),
+  auto row = internal::model::MaterializeRow(backing_->layout(),
                                       std::move(encoded).value());
   if (!row.ok()) {
     return row.status();
@@ -149,4 +149,4 @@ StatusOr<std::optional<Row>> CompactDeltaSnapshot::Get(
   return view_.Get(primary_key);
 }
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::store

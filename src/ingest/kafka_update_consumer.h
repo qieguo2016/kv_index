@@ -7,7 +7,7 @@
 #include "kv_index/status.h"
 #include "kv_index/types.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::ingest {
 
 class KafkaUpdateConsumerClient {
  public:
@@ -48,6 +48,6 @@ class KafkaUpdateConsumer {
   std::unique_ptr<KafkaUpdateConsumerClient> client_;
 };
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::ingest
 
 #endif  // KV_INDEX_SRC_INGEST_KAFKA_UPDATE_CONSUMER_H_

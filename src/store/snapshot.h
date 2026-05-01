@@ -14,7 +14,7 @@
 #include "src/store/frozen_primary_key_index.h"
 #include "src/model/row_storage.h"
 
-namespace kv_index::core {
+namespace kv_index::internal::store {
 
 struct OwnedSnapshotRowPayload {
   std::vector<std::byte> arena;
@@ -26,7 +26,7 @@ struct OwnedSnapshotRowPayload {
 
 struct SnapshotRow {
   std::uint64_t primary_key = 0;
-  internal::EncodedRow encoded;
+  internal::model::EncodedRow encoded;
 };
 
 class SnapshotBacking {
@@ -37,7 +37,7 @@ class SnapshotBacking {
       const noexcept = 0;
   virtual std::span<const std::byte> frozen_index_bytes() const noexcept = 0;
   virtual std::uint64_t row_count() const noexcept = 0;
-  virtual StatusOr<internal::EncodedRow> EncodedRowAt(
+  virtual StatusOr<internal::model::EncodedRow> EncodedRowAt(
       std::uint64_t row_offset) const = 0;
 };
 
@@ -72,7 +72,7 @@ class OwnedSnapshotBacking final : public SnapshotBacking {
     return static_cast<std::uint64_t>(row_payloads_.size());
   }
 
-  StatusOr<internal::EncodedRow> EncodedRowAt(
+  StatusOr<internal::model::EncodedRow> EncodedRowAt(
       std::uint64_t row_offset) const override;
 
  private:
@@ -124,6 +124,6 @@ class CompactDeltaSnapshot {
   ImmutableRowSnapshotView view_;
 };
 
-}  // namespace kv_index::core
+}  // namespace kv_index::internal::store
 
 #endif  // KV_INDEX_SRC_STORE_SNAPSHOT_H_
