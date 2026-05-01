@@ -43,7 +43,15 @@ bazel test //tests:integration_tests
 ├── include/
 │   └── kv_index/     # public C++ headers
 ├── src/
-│   ├── core/         # core forward-index implementation
+│   ├── api/          # public ForwardIndex facade implementation
+│   ├── artifact/     # artifact format and mmap-backed artifact loading
+│   ├── base/         # low-level utilities
+│   ├── ingest/       # Kafka update consumption and application
+│   ├── model/        # schema, layout, and row materialization
+│   ├── rebuild/      # async load, compaction, and full rebase orchestration
+│   ├── runtime/      # shard state and shard publication
+│   ├── store/        # immutable snapshots and realtime row stores
+│   ├── testing/      # internal white-box test seams
 │   └── version.cc
 ├── tests/
 │   ├── BUILD.bazel

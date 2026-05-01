@@ -1,4 +1,4 @@
-#include "src/core/kafka_update_consumer.h"
+#include "src/ingest/kafka_update_consumer.h"
 
 #include <cstddef>
 #include <cstdint>

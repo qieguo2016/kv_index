@@ -1,7 +1,7 @@
 #include "kv_index/schema.h"
-#include "src/core/row_storage.h"
-#include "src/core/snapshot.h"
-#include "src/core/snapshot_builder.h"
+#include "src/model/row_storage.h"
+#include "src/store/snapshot.h"
+#include "src/store/snapshot_builder.h"
 
 #include <chrono>
 #include <cstdint>

@@ -1,4 +1,4 @@
-#include "src/core/artifact_format.h"
+#include "src/artifact/artifact_format.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -11,7 +11,7 @@
 
 #include "kv_index/schema.h"
 #include "kv_index/status.h"
-#include "src/core/row_storage.h"
+#include "src/model/row_storage.h"
 #include "tests/test_support/artifact_writer.h"
 #include "tests/test_support/test_macros.h"
 

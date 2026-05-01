@@ -2,6 +2,11 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
 
+INTERNAL_VISIBILITY = [
+    "//:__pkg__",
+    "//tests:__pkg__",
+]
+
 cc_library(
     name = "kv_index_public_headers",
     hdrs = [
@@ -17,46 +22,103 @@ cc_library(
 )
 
 cc_library(
-    name = "kv_index_internal",
+    name = "kv_index_base",
     srcs = [
-        "src/core/artifact_format.cc",
-        "src/core/async_load.cc",
-        "src/core/compaction.cc",
-        "src/core/frozen_primary_key_index.cc",
-        "src/core/full_rebase.cc",
-        "src/core/forward_index.cc",
-        "src/core/hash.cc",
-        "src/core/kafka_update_consumer.cc",
-        "src/core/mmap_snapshot_backing.cc",
-        "src/core/realtime_delta.cc",
-        "src/core/row_storage.cc",
-        "src/core/schema.cc",
-        "src/core/shard_directory.cc",
-        "src/core/shard_state.cc",
-        "src/core/snapshot.cc",
-        "src/core/snapshot_builder.cc",
-        "src/core/update_applier.cc",
-        "src/core/update_coordinator.cc",
+        "src/base/hash.cc",
     ],
     hdrs = [
-        "src/core/artifact_format.h",
-        "src/core/async_load.h",
-        "src/core/byte_io.h",
-        "src/core/compaction.h",
-        "src/core/frozen_primary_key_index.h",
-        "src/core/full_rebase.h",
-        "src/core/hash.h",
-        "src/core/kafka_update_consumer.h",
-        "src/core/mmap_snapshot_backing.h",
-        "src/core/realtime_delta.h",
-        "src/core/row_storage.h",
-        "src/core/shard_directory.h",
-        "src/core/shard_state.h",
-        "src/core/snapshot.h",
-        "src/core/snapshot_builder.h",
-        "src/core/test_peer.h",
-        "src/core/update_applier.h",
-        "src/core/update_coordinator.h",
+        "src/base/byte_io.h",
+        "src/base/hash.h",
+    ],
+    deps = [":kv_index_public_headers"],
+    visibility = INTERNAL_VISIBILITY,
+)
+
+cc_library(
+    name = "kv_index_model",
+    srcs = [
+        "src/model/row_storage.cc",
+        "src/model/schema.cc",
+    ],
+    hdrs = [
+        "src/model/row_storage.h",
+    ],
+    deps = [
+        ":kv_index_base",
+        ":kv_index_public_headers",
+    ],
+    visibility = INTERNAL_VISIBILITY,
+)
+
+cc_library(
+    name = "kv_index_store",
+    srcs = [
+        "src/store/frozen_primary_key_index.cc",
+        "src/store/realtime_delta.cc",
+        "src/store/snapshot.cc",
+        "src/store/snapshot_builder.cc",
+    ],
+    hdrs = [
+        "src/store/frozen_primary_key_index.h",
+        "src/store/realtime_delta.h",
+        "src/store/snapshot.h",
+        "src/store/snapshot_builder.h",
+    ],
+    deps = [
+        ":kv_index_base",
+        ":kv_index_model",
+        ":kv_index_public_headers",
+    ],
+    visibility = INTERNAL_VISIBILITY,
+)
+
+cc_library(
+    name = "kv_index_artifact",
+    srcs = [
+        "src/artifact/artifact_format.cc",
+        "src/artifact/mmap_snapshot_backing.cc",
+    ],
+    hdrs = [
+        "src/artifact/artifact_format.h",
+        "src/artifact/mmap_snapshot_backing.h",
+    ],
+    deps = [
+        ":kv_index_base",
+        ":kv_index_public_headers",
+        ":kv_index_store",
+    ],
+    visibility = INTERNAL_VISIBILITY,
+)
+
+cc_library(
+    name = "kv_index_runtime",
+    srcs = [
+        "src/runtime/shard_directory.cc",
+        "src/runtime/shard_state.cc",
+    ],
+    hdrs = [
+        "src/runtime/shard_directory.h",
+        "src/runtime/shard_state.h",
+    ],
+    deps = [
+        ":kv_index_artifact",
+        ":kv_index_public_headers",
+        ":kv_index_store",
+    ],
+    visibility = INTERNAL_VISIBILITY,
+)
+
+cc_library(
+    name = "kv_index_ingest",
+    srcs = [
+        "src/ingest/kafka_update_consumer.cc",
+        "src/ingest/update_applier.cc",
+        "src/ingest/update_coordinator.cc",
+    ],
+    hdrs = [
+        "src/ingest/kafka_update_consumer.h",
+        "src/ingest/update_applier.h",
+        "src/ingest/update_coordinator.h",
     ],
     copts = [
         "-Xclang",
@@ -64,22 +126,87 @@ cc_library(
         "-Xclang",
         "/opt/homebrew/opt/librdkafka/include",
     ],
-    deps = [":kv_index_public_headers"],
-    linkopts = ["/opt/homebrew/opt/librdkafka/lib/librdkafka.dylib"],
-    visibility = [
-        "//:__pkg__",
-        "//tests:__pkg__",
+    deps = [
+        ":kv_index_base",
+        ":kv_index_model",
+        ":kv_index_public_headers",
+        ":kv_index_store",
     ],
+    linkopts = ["/opt/homebrew/opt/librdkafka/lib/librdkafka.dylib"],
+    visibility = INTERNAL_VISIBILITY,
+)
+
+cc_library(
+    name = "kv_index_rebuild",
+    srcs = [
+        "src/rebuild/async_load.cc",
+        "src/rebuild/compaction.cc",
+        "src/rebuild/full_rebase.cc",
+    ],
+    hdrs = [
+        "src/rebuild/async_load.h",
+        "src/rebuild/compaction.h",
+        "src/rebuild/full_rebase.h",
+    ],
+    deps = [
+        ":kv_index_artifact",
+        ":kv_index_base",
+        ":kv_index_ingest",
+        ":kv_index_model",
+        ":kv_index_public_headers",
+        ":kv_index_runtime",
+        ":kv_index_store",
+    ],
+    visibility = INTERNAL_VISIBILITY,
+)
+
+cc_library(
+    name = "kv_index_api",
+    srcs = [
+        "src/api/forward_index.cc",
+    ],
+    deps = [
+        ":kv_index_base",
+        ":kv_index_public_headers",
+        ":kv_index_rebuild",
+        ":kv_index_runtime",
+    ],
+    visibility = INTERNAL_VISIBILITY,
+)
+
+cc_library(
+    name = "kv_index_testing_internal",
+    hdrs = [
+        "src/testing/test_peer.h",
+    ],
+    deps = [
+        ":kv_index_public_headers",
+        ":kv_index_runtime",
+    ],
+    visibility = INTERNAL_VISIBILITY,
+)
+
+cc_library(
+    name = "kv_index_internal",
+    deps = [
+        ":kv_index_api",
+        ":kv_index_artifact",
+        ":kv_index_base",
+        ":kv_index_ingest",
+        ":kv_index_model",
+        ":kv_index_rebuild",
+        ":kv_index_runtime",
+        ":kv_index_store",
+        ":kv_index_testing_internal",
+    ],
+    visibility = INTERNAL_VISIBILITY,
 )
 
 cc_library(
     name = "kv_index_version",
     srcs = ["src/version.cc"],
     deps = [":kv_index_public_headers"],
-    visibility = [
-        "//:__pkg__",
-        "//tests:__pkg__",
-    ],
+    visibility = INTERNAL_VISIBILITY,
 )
 
 cc_library(

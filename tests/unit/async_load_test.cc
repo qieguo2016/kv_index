@@ -15,12 +15,12 @@
 
 #include "kv_index/row.h"
 #include "kv_index/schema.h"
-#include "src/core/async_load.h"
-#include "src/core/row_storage.h"
-#include "src/core/shard_state.h"
-#include "src/core/snapshot.h"
-#include "src/core/snapshot_builder.h"
-#include "src/core/test_peer.h"
+#include "src/rebuild/async_load.h"
+#include "src/model/row_storage.h"
+#include "src/runtime/shard_state.h"
+#include "src/store/snapshot.h"
+#include "src/store/snapshot_builder.h"
+#include "src/testing/test_peer.h"
 #include "tests/test_support/artifact_writer.h"
 #include "tests/test_support/test_macros.h"
 

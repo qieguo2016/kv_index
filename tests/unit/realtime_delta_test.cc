@@ -1,4 +1,4 @@
-#include "src/core/realtime_delta.h"
+#include "src/store/realtime_delta.h"
 
 #include <cstdint>
 #include <memory>
@@ -10,7 +10,7 @@
 #include "kv_index/schema.h"
 #include "kv_index/status.h"
 #include "kv_index/types.h"
-#include "src/core/row_storage.h"
+#include "src/model/row_storage.h"
 #include "tests/test_support/test_macros.h"
 
 namespace {

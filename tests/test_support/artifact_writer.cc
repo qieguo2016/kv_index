@@ -9,9 +9,9 @@
 #include <utility>
 #include <vector>
 
-#include "src/core/artifact_format.h"
-#include "src/core/byte_io.h"
-#include "src/core/snapshot_builder.h"
+#include "src/artifact/artifact_format.h"
+#include "src/base/byte_io.h"
+#include "src/store/snapshot_builder.h"
 
 namespace kv_index::test_support {
 namespace {

@@ -1,10 +1,10 @@
-#include "src/core/shard_directory.h"
+#include "src/runtime/shard_directory.h"
 
 #include <cstdint>
 #include <memory>
 
 #include "kv_index/status.h"
-#include "src/core/shard_state.h"
+#include "src/runtime/shard_state.h"
 #include "tests/test_support/test_macros.h"
 
 namespace {

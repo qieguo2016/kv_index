@@ -10,7 +10,7 @@
 
 #include "kv_index/schema.h"
 #include "kv_index/status.h"
-#include "src/core/row_storage.h"
+#include "src/model/row_storage.h"
 
 namespace kv_index::test_support {
 

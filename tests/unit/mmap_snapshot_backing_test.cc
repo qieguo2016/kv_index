@@ -1,4 +1,4 @@
-#include "src/core/mmap_snapshot_backing.h"
+#include "src/artifact/mmap_snapshot_backing.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -8,8 +8,8 @@
 #include "kv_index/row.h"
 #include "kv_index/schema.h"
 #include "kv_index/status.h"
-#include "src/core/row_storage.h"
-#include "src/core/snapshot.h"
+#include "src/model/row_storage.h"
+#include "src/store/snapshot.h"
 #include "tests/test_support/artifact_writer.h"
 #include "tests/test_support/test_macros.h"
 

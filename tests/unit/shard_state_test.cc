@@ -1,4 +1,4 @@
-#include "src/core/shard_state.h"
+#include "src/runtime/shard_state.h"
 
 #include <array>
 #include <cstddef>
@@ -13,10 +13,10 @@
 #include "kv_index/row.h"
 #include "kv_index/schema.h"
 #include "kv_index/types.h"
-#include "src/core/frozen_primary_key_index.h"
-#include "src/core/realtime_delta.h"
-#include "src/core/row_storage.h"
-#include "src/core/snapshot_builder.h"
+#include "src/store/frozen_primary_key_index.h"
+#include "src/store/realtime_delta.h"
+#include "src/model/row_storage.h"
+#include "src/store/snapshot_builder.h"
 #include "tests/test_support/test_macros.h"
 
 namespace {

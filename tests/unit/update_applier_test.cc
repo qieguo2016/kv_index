@@ -1,4 +1,4 @@
-#include "src/core/update_applier.h"
+#include "src/ingest/update_applier.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -13,7 +13,7 @@
 #include "kv_index/schema.h"
 #include "kv_index/status.h"
 #include "kv_index/types.h"
-#include "src/core/realtime_delta.h"
+#include "src/store/realtime_delta.h"
 #include "tests/test_support/test_macros.h"
 
 namespace {

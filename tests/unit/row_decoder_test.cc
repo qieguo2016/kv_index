@@ -1,6 +1,6 @@
 #include "kv_index/row.h"
 #include "kv_index/schema.h"
-#include "src/core/row_storage.h"
+#include "src/model/row_storage.h"
 
 #include <array>
 #include <cstdint>

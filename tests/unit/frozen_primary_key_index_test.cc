@@ -1,4 +1,4 @@
-#include "src/core/frozen_primary_key_index.h"
+#include "src/store/frozen_primary_key_index.h"
 
 #include <array>
 #include <cstddef>
@@ -7,7 +7,7 @@
 #include <span>
 #include <vector>
 
-#include "src/core/hash.h"
+#include "src/base/hash.h"
 #include "tests/test_support/test_macros.h"
 
 namespace {

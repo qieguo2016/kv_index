@@ -1,4 +1,4 @@
-#include "src/core/compaction.h"
+#include "src/rebuild/compaction.h"
 
 #include <cstdint>
 #include <memory>
@@ -11,11 +11,11 @@
 #include "kv_index/schema.h"
 #include "kv_index/status.h"
 #include "kv_index/types.h"
-#include "src/core/realtime_delta.h"
-#include "src/core/row_storage.h"
-#include "src/core/shard_state.h"
-#include "src/core/snapshot.h"
-#include "src/core/snapshot_builder.h"
+#include "src/store/realtime_delta.h"
+#include "src/model/row_storage.h"
+#include "src/runtime/shard_state.h"
+#include "src/store/snapshot.h"
+#include "src/store/snapshot_builder.h"
 #include "tests/test_support/test_macros.h"
 
 namespace {
