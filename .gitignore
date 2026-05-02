@@ -52,3 +52,7 @@
 .env
 .env.*
 !.env.example
+
+
+tests/data
+__pycache__
