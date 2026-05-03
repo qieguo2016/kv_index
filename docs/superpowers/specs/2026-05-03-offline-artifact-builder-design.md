@@ -2,9 +2,9 @@
 
 ## Goal
 
-Add an offline command that builds a full kv_index artifact from a schema file
-and a Parquet input while keeping the online `kv_index` Bazel module free of
-offline-only dependencies.
+Add an offline command that builds a full kv_index artifact directory from a
+schema file and a Parquet input directory while keeping the online `kv_index`
+Bazel module free of offline-only dependencies.
 
 ## Dependency Boundary
 
@@ -35,7 +35,8 @@ format and accepts already compiled layouts plus already encoded rows:
 - artifact id, shard count, hash seed, hash version
 - compiled row layout
 - optional source progress
-- per-shard primary keys and `model::EncodedRow` values
+- per-shard primary keys and `model::EncodedRow` values, either as a complete
+  multi-shard file or as one physical shard file
 
 This moves the existing artifact-writing logic out of `tests/test_support` into
 production code so tests and offline tools use the same writer.
@@ -49,27 +50,35 @@ The offline module owns file-format adapters:
 
 - schema-file parser: maps `schema.yaml` to `RuntimeSchema`,
   `CompiledRowLayout`, and primary-key metadata.
-- Parquet reader: reads batches from the Parquet file, validates columns against
-  the schema config, and converts each row to field values.
+- Parquet reader: recursively reads Parquet files from the input directory,
+  validates columns against the schema config, and converts each row to field
+  values.
 - row encoder: converts typed values into `model::EncodedRow` for the compiled
   layout.
 - shard router: uses `StableHash64(primary_key, hash_seed, hash_version) %
   shard_count`.
-- command entry point: validates CLI options and writes the full artifact.
+- command entry point: validates CLI options and writes the full artifact
+  directory, including one `shard_XXXXX.kvi` per shard plus the updated schema
+  file.
 
 The initial CLI shape is:
 
 ```bash
 kv_index_build_artifact \
   --schema schema.yaml \
-  --input data.parquet \
-  --output full.kvi \
+  --input hive_table_parquet_dir \
+  --output full_artifact_dir \
   --artifact_id build-20260503 \
   --shard_count 128 \
   --hash_seed 0 \
   --hash_version 1 \
+  [--schema_version N] \
   [--omit_source_progress]
 ```
+
+The schema file may also provide `shard_count`, `hash_seed`, and `hash_version`.
+CLI values override schema values. If `--schema_version` is omitted, the tool
+writes `input_schema_version + 1` to the output schema and artifact metadata.
 
 ## Compatibility Rules
 

@@ -285,23 +285,36 @@ StatusOr<std::shared_ptr<const store::OwnedSnapshotBacking>> BuildShardSnapshot(
   return builder.Seal();
 }
 
-}  // namespace
-
-Status WriteArtifact(const std::string& path, const ArtifactBuildSpec& spec) {
+Status WriteArtifactWithShards(
+    const std::string& path, const ArtifactBuildSpec& spec,
+    const std::vector<const ArtifactShardBuildSpec*>& selected_shards) {
   if (spec.layout == nullptr) {
     return Status::InvalidArgument("artifact layout is required");
   }
   if (spec.artifact_id.size() > kArtifactIdCapacity) {
     return Status::InvalidArgument("artifact id is too long");
   }
-  if (spec.shards.size() != spec.shard_count) {
-    return Status::InvalidArgument("artifact shard specs are incomplete");
+  if (spec.shard_count == 0) {
+    return Status::InvalidArgument("artifact shard count must be non-zero");
+  }
+  if (selected_shards.empty()) {
+    return Status::InvalidArgument("artifact shard selection is empty");
+  }
+  std::vector<bool> seen_shards(spec.shard_count, false);
+  for (const ArtifactShardBuildSpec* shard : selected_shards) {
+    if (shard == nullptr || shard->shard_id >= spec.shard_count) {
+      return Status::InvalidArgument("artifact shard id is out of range");
+    }
+    if (seen_shards[shard->shard_id]) {
+      return Status::InvalidArgument("duplicate artifact shard spec");
+    }
+    seen_shards[shard->shard_id] = true;
   }
 
   std::vector<ArtifactSection> sections;
   const std::uint32_t section_count = static_cast<std::uint32_t>(
       1 + (spec.include_source_progress_section ? 1 : 0) +
-      spec.shard_count * 7);
+      selected_shards.size() * 7);
   std::vector<std::byte> file(kArtifactHeaderSize +
                               section_count * kArtifactSectionEntrySize);
 
@@ -329,7 +342,8 @@ Status WriteArtifact(const std::string& path, const ArtifactBuildSpec& spec) {
     }
   }
 
-  for (const ArtifactShardBuildSpec& shard : spec.shards) {
+  for (const ArtifactShardBuildSpec* selected_shard : selected_shards) {
+    const ArtifactShardBuildSpec& shard = *selected_shard;
     auto backing = BuildShardSnapshot(spec, shard);
     if (!backing.ok()) {
       return backing.status();
@@ -463,6 +477,31 @@ Status WriteArtifact(const std::string& path, const ArtifactBuildSpec& spec) {
     return Status::Unavailable("failed to write artifact");
   }
   return Status::Ok();
+}
+
+}  // namespace
+
+Status WriteArtifact(const std::string& path, const ArtifactBuildSpec& spec) {
+  if (spec.shards.size() != spec.shard_count) {
+    return Status::InvalidArgument("artifact shard specs are incomplete");
+  }
+  std::vector<const ArtifactShardBuildSpec*> selected;
+  selected.reserve(spec.shards.size());
+  for (const ArtifactShardBuildSpec& shard : spec.shards) {
+    selected.push_back(&shard);
+  }
+  return WriteArtifactWithShards(path, spec, selected);
+}
+
+Status WriteArtifactShard(const std::string& path,
+                          const ArtifactBuildSpec& spec,
+                          std::uint32_t shard_id) {
+  for (const ArtifactShardBuildSpec& shard : spec.shards) {
+    if (shard.shard_id == shard_id) {
+      return WriteArtifactWithShards(path, spec, {&shard});
+    }
+  }
+  return Status::InvalidArgument("requested artifact shard spec is missing");
 }
 
 }  // namespace kv_index::artifact

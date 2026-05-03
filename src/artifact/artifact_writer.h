@@ -41,6 +41,9 @@ struct ArtifactBuildSpec {
 };
 
 Status WriteArtifact(const std::string& path, const ArtifactBuildSpec& spec);
+Status WriteArtifactShard(const std::string& path,
+                          const ArtifactBuildSpec& spec,
+                          std::uint32_t shard_id);
 
 }  // namespace kv_index::artifact
 

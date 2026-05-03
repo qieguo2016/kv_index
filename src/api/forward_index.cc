@@ -43,8 +43,9 @@ Status PreflightLocalArtifactUri(const LoadRequest& request) {
   if (stat(path.c_str(), &file_stat) != 0) {
     return Status::NotFound("artifact file does not exist");
   }
-  if (!S_ISREG(file_stat.st_mode)) {
-    return Status::InvalidArgument("artifact path is not a regular file");
+  if (!S_ISREG(file_stat.st_mode) && !S_ISDIR(file_stat.st_mode)) {
+    return Status::InvalidArgument(
+        "artifact path is neither a regular file nor a directory");
   }
   return Status::Ok();
 }

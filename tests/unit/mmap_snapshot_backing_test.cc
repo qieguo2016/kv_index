@@ -1,9 +1,11 @@
 #include "src/artifact/mmap_snapshot_backing.h"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <string>
+#include <sys/stat.h>
 
 #include "kv_index/row.h"
 #include "kv_index/schema.h"
@@ -137,6 +139,23 @@ void FileUriMappingAndViewOwnMappedLifetime() {
   KV_INDEX_CHECK_EQ(row->value().Get<std::int32_t>(1).value(), 88);
 }
 
+void DirectoryUriResolvesShardFile() {
+  const std::string directory = TempPath("mmap_snapshot_directory");
+  if (mkdir(directory.c_str(), 0755) != 0 && errno != EEXIST) {
+    KV_INDEX_CHECK(false);
+  }
+  const auto spec = SpecWithOneRow();
+  KV_INDEX_CHECK(WriteTestArtifact(directory + "/shard_00000.kvi", spec).ok());
+
+  auto backing = MmapSnapshotBacking::LoadShard(directory, 0, OptionsFor(spec));
+  KV_INDEX_CHECK(backing.ok());
+  FullSnapshotView view(*backing);
+  auto row = view.Get(42);
+  KV_INDEX_CHECK(row.ok());
+  KV_INDEX_CHECK(row->has_value());
+  KV_INDEX_CHECK_EQ(row->value().Get<std::int32_t>(1).value(), 88);
+}
+
 void InvalidPathAndRemoteSchemeFailClosed() {
   auto missing = MmapSnapshotBacking::LoadShard(
       "/tmp/kv_index_missing_artifact_for_mmap", 0, {});
@@ -194,6 +213,7 @@ void OptionalMmapLoadAcceptsMissingSourceProgress() {
 int Main() {
   LocalFileMappingServesRowsThroughFullSnapshotView();
   FileUriMappingAndViewOwnMappedLifetime();
+  DirectoryUriResolvesShardFile();
   InvalidPathAndRemoteSchemeFailClosed();
   ExplicitPrewarmTouchesShardSectionsAndMarksReady();
   DefaultMmapLoadRejectsMissingSourceProgress();

@@ -53,6 +53,7 @@
 .env
 .env.*
 !.env.example
+/tools/offline/third_party/
 
 tests/data/*
 !tests/data/

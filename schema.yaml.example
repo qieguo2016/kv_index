@@ -3,6 +3,9 @@
 # can be reviewed independently.
 
 schema_version: 11
+shard_count: 128
+hash_seed: 0
+hash_version: 1
 
 primary_key:
   name: record_id

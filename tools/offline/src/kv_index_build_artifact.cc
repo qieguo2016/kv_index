@@ -4,7 +4,7 @@
 #include <string>
 #include <string_view>
 
-#include "src/artifact/artifact_writer.h"
+#include "src/offline_artifact_builder.h"
 
 namespace {
 
@@ -13,9 +13,10 @@ struct Options {
   std::string input_path;
   std::string output_path;
   std::string artifact_id;
-  std::uint32_t shard_count = 128;
-  std::uint64_t hash_seed = 0;
-  std::uint32_t hash_version = 1;
+  std::optional<std::uint32_t> shard_count;
+  std::optional<std::uint64_t> hash_seed;
+  std::optional<std::uint32_t> hash_version;
+  std::optional<std::uint64_t> schema_version;
   bool omit_source_progress = false;
   bool help = false;
 };
@@ -23,11 +24,11 @@ struct Options {
 void PrintUsage(std::ostream& out) {
   out << "usage: kv_index_build_artifact \\\n"
       << "  --schema schema.yaml \\\n"
-      << "  --input data.parquet \\\n"
-      << "  --output full.kvi \\\n"
+      << "  --input parquet_dir \\\n"
+      << "  --output artifact_dir \\\n"
       << "  --artifact_id build-id \\\n"
-      << "  [--shard_count 128] [--hash_seed 0] [--hash_version 1] \\\n"
-      << "  [--omit_source_progress]\n";
+      << "  [--schema_version N] [--shard_count 128] \\\n"
+      << "  [--hash_seed 0] [--hash_version 1] [--omit_source_progress]\n";
 }
 
 std::optional<std::string_view> ValueFor(int* index, int argc, char** argv) {
@@ -112,24 +113,36 @@ bool ParseArgs(int argc, char** argv, Options* options, std::ostream& err) {
       options->artifact_id = std::string(*value);
     } else if (arg == "--shard_count") {
       auto value = ValueFor(&i, argc, argv);
-      if (!value.has_value() || !ParseUInt32(*value, &options->shard_count) ||
-          options->shard_count == 0) {
+      std::uint32_t parsed = 0;
+      if (!value.has_value() || !ParseUInt32(*value, &parsed) || parsed == 0) {
         err << "invalid value for --shard_count\n";
         return false;
       }
+      options->shard_count = parsed;
     } else if (arg == "--hash_seed") {
       auto value = ValueFor(&i, argc, argv);
-      if (!value.has_value() || !ParseUInt64(*value, &options->hash_seed)) {
+      std::uint64_t parsed = 0;
+      if (!value.has_value() || !ParseUInt64(*value, &parsed)) {
         err << "invalid value for --hash_seed\n";
         return false;
       }
+      options->hash_seed = parsed;
     } else if (arg == "--hash_version") {
       auto value = ValueFor(&i, argc, argv);
-      if (!value.has_value() || !ParseUInt32(*value, &options->hash_version) ||
-          options->hash_version == 0) {
+      std::uint32_t parsed = 0;
+      if (!value.has_value() || !ParseUInt32(*value, &parsed) || parsed == 0) {
         err << "invalid value for --hash_version\n";
         return false;
       }
+      options->hash_version = parsed;
+    } else if (arg == "--schema_version") {
+      auto value = ValueFor(&i, argc, argv);
+      std::uint64_t parsed = 0;
+      if (!value.has_value() || !ParseUInt64(*value, &parsed) || parsed == 0) {
+        err << "invalid value for --schema_version\n";
+        return false;
+      }
+      options->schema_version = parsed;
     } else if (arg == "--omit_source_progress") {
       options->omit_source_progress = true;
     } else {
@@ -177,23 +190,28 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  kv_index::artifact::ArtifactBuildSpec build_spec;
-  build_spec.artifact_id = options.artifact_id;
-  build_spec.shard_count = options.shard_count;
-  build_spec.hash_seed = options.hash_seed;
-  build_spec.hash_version = options.hash_version;
-  build_spec.include_source_progress_section = !options.omit_source_progress;
+  kv_index::offline::BuildArtifactOptions build_options;
+  build_options.schema_path = options.schema_path;
+  build_options.input_path = options.input_path;
+  build_options.output_path = options.output_path;
+  build_options.artifact_id = options.artifact_id;
+  build_options.shard_count = options.shard_count;
+  build_options.hash_seed = options.hash_seed;
+  build_options.hash_version = options.hash_version;
+  build_options.schema_version = options.schema_version;
+  build_options.omit_source_progress = options.omit_source_progress;
 
-  std::cerr << "schema and parquet adapters are not implemented yet; "
-            << "artifact_id=" << build_spec.artifact_id
-            << ", shard_count=" << build_spec.shard_count
-            << ", hash_seed=" << build_spec.hash_seed
-            << ", hash_version=" << build_spec.hash_version
-            << ", include_source_progress="
-            << (build_spec.include_source_progress_section ? "true" : "false")
-            << ", "
-            << "validated CLI options for schema=" << options.schema_path
-            << ", input=" << options.input_path
-            << ", output=" << options.output_path << "\n";
-  return 3;
+  auto result = kv_index::offline::BuildArtifactDirectory(build_options);
+  if (!result.ok()) {
+    std::cerr << "failed to build artifact: " << result.status().message()
+              << "\n";
+    return 1;
+  }
+
+  std::cout << "wrote " << result->row_count << " rows across "
+            << result->shard_count << " shards to " << options.output_path
+            << " with schema_version=" << result->schema_version
+            << ", hash_seed=" << result->hash_seed
+            << ", hash_version=" << result->hash_version << "\n";
+  return 0;
 }

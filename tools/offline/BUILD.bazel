@@ -1,9 +1,54 @@
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 package(default_visibility = ["//visibility:public"])
+
+ARROW_WARNING_COPTS = [
+    "-Wno-extra-semi",
+    "-Wno-unused-parameter",
+]
+
+cc_library(
+    name = "local_arrow_parquet",
+    hdrs = glob([
+        "third_party/apache_arrow/include/arrow/**/*.h",
+        "third_party/apache_arrow/include/parquet/**/*.h",
+    ]),
+    includes = ["third_party/apache_arrow/include"],
+    linkopts = [
+        "/opt/homebrew/opt/apache-arrow/lib/libarrow.dylib",
+        "/opt/homebrew/opt/apache-arrow/lib/libparquet.dylib",
+        "-Wl,-rpath,/opt/homebrew/opt/apache-arrow/lib",
+    ],
+)
+
+cc_library(
+    name = "offline_artifact_builder",
+    srcs = ["src/offline_artifact_builder.cc"],
+    hdrs = ["src/offline_artifact_builder.h"],
+    copts = ARROW_WARNING_COPTS,
+    deps = [
+        ":local_arrow_parquet",
+        "@kv_index//:kv_index",
+        "@kv_index//:kv_index_artifact_builder",
+    ],
+)
 
 cc_binary(
     name = "kv_index_build_artifact",
     srcs = ["src/kv_index_build_artifact.cc"],
-    deps = ["@kv_index//:kv_index_artifact_builder"],
+    deps = [":offline_artifact_builder"],
+)
+
+cc_test(
+    name = "offline_artifact_builder_test",
+    srcs = ["tests/offline_artifact_builder_test.cc"],
+    size = "small",
+    copts = ARROW_WARNING_COPTS,
+    deps = [
+        ":local_arrow_parquet",
+        ":offline_artifact_builder",
+        "@kv_index//:kv_index",
+    ],
 )

@@ -5,7 +5,9 @@
 #include <cstdint>
 #include <cstring>
 #include <fcntl.h>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <span>
 #include <string>
 #include <sys/mman.h>
@@ -36,6 +38,57 @@ StatusOr<std::string> ResolveLocalPath(const std::string& artifact_uri) {
     return Status::InvalidArgument("artifact path is empty");
   }
   return path;
+}
+
+std::string JoinPath(const std::string& lhs, const std::string& rhs) {
+  if (lhs.empty() || lhs == "/") {
+    return lhs + rhs;
+  }
+  return lhs + "/" + rhs;
+}
+
+std::string ShardFileName(std::uint32_t shard_id) {
+  std::ostringstream out;
+  out << "shard_" << std::setw(5) << std::setfill('0') << shard_id << ".kvi";
+  return out.str();
+}
+
+StatusOr<std::string> ResolveArtifactFilePath(const std::string& artifact_uri,
+                                              std::uint32_t shard_id) {
+  auto path = ResolveLocalPath(artifact_uri);
+  if (!path.ok()) {
+    return path.status();
+  }
+
+  struct stat statbuf {};
+  if (stat(path->c_str(), &statbuf) != 0) {
+    if (errno == ENOENT) {
+      return Status::NotFound("artifact file not found");
+    }
+    return Status::Unavailable(std::string("failed to stat artifact path: ") +
+                               std::strerror(errno));
+  }
+  if (S_ISREG(statbuf.st_mode)) {
+    return *path;
+  }
+  if (!S_ISDIR(statbuf.st_mode)) {
+    return Status::InvalidArgument(
+        "artifact path is neither a regular file nor a directory");
+  }
+
+  const std::string shard_path = JoinPath(*path, ShardFileName(shard_id));
+  if (stat(shard_path.c_str(), &statbuf) != 0) {
+    if (errno == ENOENT) {
+      return Status::NotFound("artifact shard file not found");
+    }
+    return Status::Unavailable(
+        std::string("failed to stat artifact shard file: ") +
+        std::strerror(errno));
+  }
+  if (!S_ISREG(statbuf.st_mode)) {
+    return Status::InvalidArgument("artifact shard path is not a regular file");
+  }
+  return shard_path;
 }
 
 StatusOr<std::span<const std::byte>> SectionBytes(
@@ -264,7 +317,7 @@ MmapSnapshotBacking::~MmapSnapshotBacking() {
 StatusOr<std::shared_ptr<MmapSnapshotBacking>> MmapSnapshotBacking::LoadShard(
     const std::string& artifact_uri, std::uint32_t shard_id,
     MmapSnapshotLoadOptions options) {
-  auto path = ResolveLocalPath(artifact_uri);
+  auto path = ResolveArtifactFilePath(artifact_uri, shard_id);
   if (!path.ok()) {
     return path.status();
   }
