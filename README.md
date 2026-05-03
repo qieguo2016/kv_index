@@ -2,8 +2,9 @@
 
 `kv_index` is a C++20 embedded in-memory forward-index library for high
 concurrency, read-heavy point lookup workloads. It keeps immutable full and
-compact snapshots plus realtime deltas in memory, and exposes pinned `Row`
-objects so decoded string/list payloads remain valid while callers hold them.
+optional compact snapshots plus optional realtime deltas in memory, and exposes
+pinned `Row` objects so decoded string/list payloads remain valid while callers
+hold them.
 
 ## Build And Test
 
@@ -34,9 +35,14 @@ bazel build //tests:get_benchmark //tests:mget_benchmark \
 
 `ForwardIndexOptions::mode` selects the serving mode at construction time.
 
-- `ForwardIndexMode::kRealtimeDelta` is the default mode. Reads apply whole-row
+- `ForwardIndexMode::kRealtimeDelta` is the default mode and remains an alias
+  for `kFullSnapshotWithRealtimeDeltaAndCompaction`. Reads apply whole-row
   layer precedence: `realtime_delta -> compact_delta -> full_snapshot`. There
   is no field-level merge between layers.
+- `ForwardIndexMode::kFullSnapshotWithRealtimeDelta` reads
+  `realtime_delta -> full_snapshot`. It uses Kafka catch-up / live apply but
+  disables compact delta and internal full rebase; it fits low-update workloads
+  with frequent external full refreshes.
 - `ForwardIndexMode::kFullSnapshotOnly` reads only full snapshots published by
   explicit async full-artifact loads through `LoadAsync`. It rejects any
   non-empty Kafka consumer config at construction time.

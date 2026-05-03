@@ -149,6 +149,26 @@ void DefaultModeRemainsRealtimeDelta() {
   const ForwardIndexOptions options;
 
   KV_INDEX_CHECK_EQ(options.mode, ForwardIndexMode::kRealtimeDelta);
+  KV_INDEX_CHECK_EQ(options.mode,
+                    ForwardIndexMode::
+                        kFullSnapshotWithRealtimeDeltaAndCompaction);
+}
+
+void ModeCapabilitiesReflectThreeServingModes() {
+  KV_INDEX_CHECK(!kv_index::ForwardIndexModeUsesKafkaRealtime(
+      ForwardIndexMode::kFullSnapshotOnly));
+  KV_INDEX_CHECK(!kv_index::ForwardIndexModeUsesCompactDelta(
+      ForwardIndexMode::kFullSnapshotOnly));
+
+  KV_INDEX_CHECK(kv_index::ForwardIndexModeUsesKafkaRealtime(
+      ForwardIndexMode::kFullSnapshotWithRealtimeDelta));
+  KV_INDEX_CHECK(!kv_index::ForwardIndexModeUsesCompactDelta(
+      ForwardIndexMode::kFullSnapshotWithRealtimeDelta));
+
+  KV_INDEX_CHECK(kv_index::ForwardIndexModeUsesKafkaRealtime(
+      ForwardIndexMode::kFullSnapshotWithRealtimeDeltaAndCompaction));
+  KV_INDEX_CHECK(kv_index::ForwardIndexModeUsesCompactDelta(
+      ForwardIndexMode::kFullSnapshotWithRealtimeDeltaAndCompaction));
 }
 
 void FullSnapshotOnlyModeAllowsEmptyKafkaConfig() {
@@ -326,6 +346,7 @@ void PublicGetThrowsOnInternalShardStatus() {
 int main() {
   DefaultOptionsMatchDesign();
   DefaultModeRemainsRealtimeDelta();
+  ModeCapabilitiesReflectThreeServingModes();
   FullSnapshotOnlyModeAllowsEmptyKafkaConfig();
   FullSnapshotOnlyModeRejectsKafkaConfig();
   RejectsInvalidShardCounts();

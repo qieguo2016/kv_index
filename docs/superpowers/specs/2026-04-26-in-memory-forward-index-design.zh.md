@@ -72,7 +72,13 @@ class Row {
 };
 ```
 
-`ForwardIndexOptions` 是 SDK 初始化入口，集中配置 shard count、delta compaction / full rebase / rebuild cutover 阈值，以及 Kafka consumer 参数。`ForwardIndex` 构造后持有这些配置，并用同一套配置创建内部 `KafkaUpdateConsumer` 和后台更新 coordinator。
+`ForwardIndexOptions` 是 SDK 初始化入口，集中配置 serving mode、shard count、delta compaction / full rebase / rebuild cutover 阈值，以及 Kafka consumer 参数。`ForwardIndex` 构造后持有这些配置，并用同一套配置创建内部 `KafkaUpdateConsumer` 和后台更新 coordinator。
+
+serving mode 分三档：
+
+- `kFullSnapshotOnly`：只加载 mmap-backed full snapshot，不创建 Kafka catch-up realtime delta，也不启用 compact delta / internal full rebase。适合无实时更新或只依赖外部全量刷新覆盖数据变化的场景。
+- `kFullSnapshotWithRealtimeDelta`：加载 full snapshot，并通过 Kafka catch-up / live apply 写入 `RealtimeDeltaAtomicTable`；不启用 `CompactDeltaSnapshot`。适合更新量小、外部全量更新较频繁的场景。该模式仍要求 artifact 携带 source progress，以保证全量切换后增量可追平。
+- `kFullSnapshotWithRealtimeDeltaAndCompaction`：完整三层结构，读路径包含 realtime delta、compact delta 和 full snapshot。适合更新持续增长、需要控制 realtime hash probe 和 append-only 内存的在线场景。兼容旧名字 `kRealtimeDelta`，默认使用该模式。
 
 `ShardState` 是内部类型；public query API 不暴露 `CurrentShard`。`Row` 必须持有 pinned shard state，保证 row arena 和 dictionary pool 中的引用在 row 生命周期内始终有效。scalar field 读取总是 copy 出去；string/list 字段可以按 API 选择返回 owning copy 或 pinned view。view 引用的生命周期不能超过持有 backing pin 的 `Row` 生命周期。`ForwardIndex::MGet` 的返回结果与输入 keys 保持相同顺序，内部按 shard 对 key 分组，并对每个 shard 调用 `ShardState::MGet`，避免重复 acquire 同一个 shard pointer。`ShardState::MGet` 只处理已经属于该 shard 的 keys，并保持传入 shard-local keys 的顺序。
 
@@ -112,9 +118,9 @@ ForwardIndex
 ShardState published container
   -> FullSnapshotView
        -> ImmutableRowSnapshotView mmap-backed or rebase-owned
-  -> CompactDeltaSnapshot
+  -> optional CompactDeltaSnapshot
        -> ImmutableRowSnapshotView owned heap-backed
-  -> RealtimeDeltaAtomicTable mutable, read-optimized
+  -> optional RealtimeDeltaAtomicTable mutable, read-optimized
   -> schema/layout handles
 ```
 
@@ -126,8 +132,8 @@ ShardState published container
 Get(primary_key)
   -> shard_id = ShardFor(primary_key)
   -> acquire current ShardState for shard_id
-  -> realtime_delta.Get(primary_key)
-  -> compact_delta.Get(primary_key)
+  -> optional realtime_delta.Get(primary_key)
+  -> optional compact_delta.Get(primary_key)
   -> full_snapshot.Get(primary_key)
   -> return Row
 ```
@@ -136,7 +142,7 @@ Get(primary_key)
 
 `FullSnapshotView` 和 `CompactDeltaSnapshot` 都是薄 wrapper，读侧都委托给 `ImmutableRowSnapshotView`。两者使用相同的 primary-key lookup、row decode、string/list pool 解析和 schema/layout 校验逻辑；差异只在 backing memory 和附加 metadata。外部 `AsyncLoad` 发布的 full snapshot 使用 mmap-backed artifact；内部 `Full Rebase` 生成的 full snapshot 可以使用 owned backing。
 
-所有 shard 使用相同的 published container 结构。delta compaction、内部 `Full Rebase` 和外部 `AsyncLoad` 也使用同一类 generation 切换模型：
+所有 shard 使用相同的 published container 结构；不同 mode 只决定 optional layer 是否存在。delta compaction、内部 `Full Rebase` 和外部 `AsyncLoad` 也使用同一类 generation 切换模型：
 
 ```text
 1. 创建 NewGeneration / NewShardState。
@@ -147,13 +153,13 @@ Get(primary_key)
 6. 等 reader drain 后下线旧 generation。
 ```
 
-因此读路径始终保持：
+完整模式下读路径保持：
 
 ```text
 realtime_delta -> compact_delta -> full_snapshot
 ```
 
-区别只在后台构建 new generation 时扫描哪些不可变输入。
+`kFullSnapshotWithRealtimeDelta` 退化为 `realtime_delta -> full_snapshot`；`kFullSnapshotOnly` 退化为 `full_snapshot`。区别只在 optional layer 是否存在，以及后台构建 new generation 时扫描哪些不可变输入。
 
 ## 运行期 Schema
 
@@ -613,7 +619,9 @@ realtime table 避免读路径应用层锁。slot 创建使用 CAS 更新 slot k
 
 ## Delta Compaction
 
-realtime delta 会随 live 更新增长。每个 shard 应独立 compact：
+delta compaction 只在 `kFullSnapshotWithRealtimeDeltaAndCompaction` / `kRealtimeDelta` 模式启用。`kFullSnapshotWithRealtimeDelta` 模式没有 compact delta 层；它依赖较小的 realtime delta 和更频繁的外部 full `AsyncLoad` 控制增量规模。
+
+realtime delta 会随 live 更新增长。完整模式下每个 shard 应独立 compact：
 
 ```text
 ActiveGeneration
@@ -641,7 +649,7 @@ delta compaction 也使用双写、切读、下线旧 generation 的流程：
 
 `CompactDeltaSnapshot` 按 primary key 存储自 full snapshot 以来发生变更记录的完整更新后 row slot。新的 compact snapshot 等价于 `sealed realtime delta + old compact snapshot`；key 冲突时 sealed realtime row 覆盖 old compact row。它与 `FullSnapshotView` 使用同一个 `ImmutableRowSnapshotView` 读接口；`FullSnapshotView` 的 backing 可以来自 mmap artifact 或内部 rebase 生成的 owned snapshot，`CompactDeltaSnapshot` 的 backing 来自 compaction 生成的 owned heap snapshot。
 
-读路径层数保持固定：
+完整模式读路径层数保持固定：
 
 ```text
 realtime_delta -> compact_delta -> full_snapshot
@@ -737,7 +745,7 @@ shard cutover batch 默认：
 
 ## 内部 Full Rebase
 
-内部 `Full Rebase` 用于控制 compact delta 长期增长。它只处理单个 shard，并把该 shard 当前 sealed 的 `CompactDeltaSnapshot` 合并进 `FullSnapshotView`。它仍遵循 generation 切换模型：rebase 期间 Kafka upsert 同时写入旧 serving generation 和 rebase generation；后台只扫描不可变的 compact/full 输入；rebase generation 追平后再切读。
+内部 `Full Rebase` 只在 compact delta 启用的模式下用于控制 compact delta 长期增长。它只处理单个 shard，并把该 shard 当前 sealed 的 `CompactDeltaSnapshot` 合并进 `FullSnapshotView`。它仍遵循 generation 切换模型：rebase 期间 Kafka upsert 同时写入旧 serving generation 和 rebase generation；后台只扫描不可变的 compact/full 输入；rebase generation 追平后再切读。
 
 ```text
 before: full_snapshot + compact_delta + realtime_delta
@@ -758,7 +766,7 @@ rebase 流程：
 9. 等 reader drain 后释放旧 full、旧 compact 和旧 realtime generation。
 ```
 
-`Full Rebase` 不消费外部 full watermark，也不切换 schema version。rebase 期间的新 Kafka upsert 写入 rebase generation 的 realtime delta，并在切换后作为最高优先级覆盖层。发布后读路径仍保持：
+`Full Rebase` 不消费外部 full watermark，也不切换 schema version。rebase 期间的新 Kafka upsert 写入 rebase generation 的 realtime delta，并在切换后作为最高优先级覆盖层。发布后完整模式读路径仍保持：
 
 ```text
 realtime_delta -> compact_delta -> full_snapshot

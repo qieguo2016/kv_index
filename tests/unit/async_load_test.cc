@@ -33,6 +33,7 @@ using kv_index::FieldEncoding;
 using kv_index::FieldSpec;
 using kv_index::FieldType;
 using kv_index::ForwardIndex;
+using kv_index::ForwardIndexMode;
 using kv_index::ForwardIndexOptions;
 using kv_index::KafkaProgress;
 using kv_index::LoadRequest;
@@ -324,6 +325,52 @@ void SuccessfulLoadPublishesMmapBackedArtifactAndProgress() {
   const auto row = index.Get(key);
   KV_INDEX_CHECK(row.has_value());
   KV_INDEX_CHECK_EQ(row->Get<std::int32_t>(1).value(), 321);
+}
+
+void RealtimeOnlyModeRunsCatchUpAndPublishesNoCompactDelta() {
+  ForwardIndexOptions options;
+  options.mode = ForwardIndexMode::kFullSnapshotWithRealtimeDelta;
+  options.shard_count = 2;
+  options.hash_seed = 17;
+  ForwardIndex index(options);
+  const std::uint64_t key = FindKeyForShard(index, 1);
+  const std::string path = TempPath("async_load_realtime_only.kvi");
+  auto spec = TwoShardSpec(options, key, 654, 7, 7);
+  KV_INDEX_CHECK(WriteTestArtifact(path, spec).ok());
+
+  auto control = std::make_shared<FakeCatchUpControl>();
+  control->final_progress = SinglePartitionProgress(7, 7);
+  ScopedCatchUpRunnerFactory factory(
+      [control](const ForwardIndexOptions&)
+          -> StatusOr<std::unique_ptr<AsyncCatchUpRunner>> {
+        return std::make_unique<FakeCatchUpRunner>(control);
+      });
+
+  const kv_index::LoadId load_id = index.LoadAsync(LoadRequest{
+      .artifact_uri = path,
+      .artifact_id = spec.artifact_id,
+  });
+  WaitForTerminalState(index, load_id);
+  const kv_index::LoadState state = index.GetLoadState(load_id);
+
+  KV_INDEX_CHECK_EQ(state.code, LoadStateCode::kSucceeded);
+  KV_INDEX_CHECK(state.terminal);
+  {
+    std::lock_guard<std::mutex> lock(control->mu);
+    KV_INDEX_CHECK(control->started);
+    KV_INDEX_CHECK_EQ(control->request.realtime_shards.size(), 2U);
+  }
+
+  const auto runtime = index.GetRuntimeStatus();
+  KV_INDEX_CHECK_EQ(runtime.shards.size(), 2U);
+  for (const auto& shard : runtime.shards) {
+    KV_INDEX_CHECK(shard.has_full_snapshot);
+    KV_INDEX_CHECK(shard.has_realtime_delta);
+    KV_INDEX_CHECK(!shard.has_compact_delta);
+  }
+  const auto row = index.Get(key);
+  KV_INDEX_CHECK(row.has_value());
+  KV_INDEX_CHECK_EQ(row->Get<std::int32_t>(1).value(), 654);
 }
 
 void InvalidPathRemainsTerminalFailedWithRicherState() {
@@ -681,6 +728,7 @@ void CatchUpFailureFailsClosedWithoutPublishing() {
 
 int Main() {
   SuccessfulLoadPublishesMmapBackedArtifactAndProgress();
+  RealtimeOnlyModeRunsCatchUpAndPublishesNoCompactDelta();
   InvalidPathRemainsTerminalFailedWithRicherState();
   HashOrShardMismatchFailsClosedWithoutPublishing();
   UnsafeSourceProgressGuardFailsClosedBeforeCutover();

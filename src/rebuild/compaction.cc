@@ -41,6 +41,11 @@ Status AddRowIfNew(store::SnapshotBuilder* builder,
 
 StatusOr<std::shared_ptr<const store::OwnedSnapshotBacking>>
 BuildCompactedDeltaSnapshot(const CompactionBuildRequest& request) {
+  if (!ForwardIndexModeUsesCompactDelta(request.mode)) {
+    return Status::FailedPrecondition(
+        "delta compaction is disabled for forward index mode");
+  }
+
   auto layout = ResolveLayout(request.state);
   if (!layout.ok()) {
     return layout.status();
@@ -93,6 +98,10 @@ BuildCompactedDeltaSnapshot(const CompactionBuildRequest& request) {
 
 StatusOr<std::shared_ptr<const runtime::ShardState>> FinishDeltaCompaction(
     FinishDeltaCompactionRequest request) {
+  if (!ForwardIndexModeUsesCompactDelta(request.mode)) {
+    return Status::FailedPrecondition(
+        "delta compaction is disabled for forward index mode");
+  }
   if (request.compact_backing == nullptr) {
     return Status::InvalidArgument("compaction compact backing is null");
   }

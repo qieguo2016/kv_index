@@ -24,13 +24,9 @@ namespace testing {
 class ForwardIndexTestPeer;
 }  // namespace testing
 
-enum class ForwardIndexMode : std::uint8_t {
-  kRealtimeDelta = 0,
-  kFullSnapshotOnly = 1,
-};
-
 struct ForwardIndexOptions {
-  ForwardIndexMode mode = ForwardIndexMode::kRealtimeDelta;
+  ForwardIndexMode mode =
+      ForwardIndexMode::kFullSnapshotWithRealtimeDeltaAndCompaction;
   std::uint32_t shard_count = 128;
   std::uint64_t hash_seed = 0;
   std::uint32_t hash_version = 1;

@@ -16,6 +16,26 @@ using LoadId = std::uint64_t;
 
 inline constexpr LoadId kInvalidLoadId = 0;
 
+enum class ForwardIndexMode : std::uint8_t {
+  // Legacy name kept for source compatibility. It maps to the full serving
+  // stack: mmap full snapshot, compact delta snapshot, and realtime delta.
+  kRealtimeDelta = 0,
+  kFullSnapshotOnly = 1,
+  kFullSnapshotWithRealtimeDelta = 2,
+  kFullSnapshotWithRealtimeDeltaAndCompaction = kRealtimeDelta,
+};
+
+inline bool ForwardIndexModeUsesKafkaRealtime(
+    ForwardIndexMode mode) noexcept {
+  return mode != ForwardIndexMode::kFullSnapshotOnly;
+}
+
+inline bool ForwardIndexModeUsesCompactDelta(
+    ForwardIndexMode mode) noexcept {
+  return mode ==
+         ForwardIndexMode::kFullSnapshotWithRealtimeDeltaAndCompaction;
+}
+
 struct SourcePosition {
   std::int32_t partition = -1;
   std::int64_t offset = -1;

@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "kv_index/status.h"
+#include "kv_index/types.h"
 #include "src/store/realtime_delta.h"
 #include "src/runtime/shard_state.h"
 #include "src/store/snapshot.h"
@@ -16,6 +17,7 @@ struct CompactionBuildRequest {
   const runtime::ShardState& state;
   store::RealtimeDeltaBoundary boundary;
   store::SnapshotBuildOptions build_options = {};
+  ForwardIndexMode mode = ForwardIndexMode::kRealtimeDelta;
 };
 
 struct FinishDeltaCompactionRequest {
@@ -23,6 +25,7 @@ struct FinishDeltaCompactionRequest {
   std::uint64_t successor_generation = 0;
   std::shared_ptr<const store::RealtimeDeltaAtomicTable> successor_realtime;
   std::shared_ptr<const store::OwnedSnapshotBacking> compact_backing;
+  ForwardIndexMode mode = ForwardIndexMode::kRealtimeDelta;
 };
 
 StatusOr<std::shared_ptr<const store::OwnedSnapshotBacking>>

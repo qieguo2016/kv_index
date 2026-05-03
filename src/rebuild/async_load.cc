@@ -313,7 +313,7 @@ Status RunExternalArtifactLoad(const LoadRequest& request, LoadId id,
       .expected_hash_seed = options.hash_seed,
       .expected_hash_version = options.hash_version,
       .source_progress_policy =
-          options.mode == ForwardIndexMode::kFullSnapshotOnly
+          !ForwardIndexModeUsesKafkaRealtime(options.mode)
               ? artifact::ArtifactSourceProgressPolicy::kOptional
               : artifact::ArtifactSourceProgressPolicy::kRequired,
   };
@@ -364,7 +364,7 @@ Status RunExternalArtifactLoad(const LoadRequest& request, LoadId id,
     StoreState(callbacks, *state);
   }
 
-  if (options.mode == ForwardIndexMode::kFullSnapshotOnly) {
+  if (!ForwardIndexModeUsesKafkaRealtime(options.mode)) {
     state->source_progress.partitions.clear();
     for (std::uint32_t shard_id = 0; shard_id < options.shard_count;
          ++shard_id) {

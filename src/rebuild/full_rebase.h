@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "kv_index/status.h"
+#include "kv_index/types.h"
 #include "src/store/realtime_delta.h"
 #include "src/runtime/shard_state.h"
 #include "src/store/snapshot.h"
@@ -16,6 +17,7 @@ struct FullRebaseBuildRequest {
   const runtime::ShardState& state;
   bool external_async_load_active = false;
   store::SnapshotBuildOptions build_options = {};
+  ForwardIndexMode mode = ForwardIndexMode::kRealtimeDelta;
 };
 
 struct FinishFullRebaseRequest {
@@ -23,6 +25,7 @@ struct FinishFullRebaseRequest {
   std::uint64_t successor_generation = 0;
   std::shared_ptr<const store::RealtimeDeltaAtomicTable> rebase_realtime;
   std::shared_ptr<const store::OwnedSnapshotBacking> full_backing;
+  ForwardIndexMode mode = ForwardIndexMode::kRealtimeDelta;
 };
 
 StatusOr<std::shared_ptr<const store::OwnedSnapshotBacking>> BuildRebasedFullSnapshot(

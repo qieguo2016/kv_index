@@ -25,6 +25,7 @@ using kv_index::FieldEncoding;
 using kv_index::FieldLayout;
 using kv_index::FieldSpec;
 using kv_index::FieldType;
+using kv_index::ForwardIndexMode;
 using kv_index::Row;
 using kv_index::RuntimeSchema;
 using kv_index::SourcePosition;
@@ -226,10 +227,47 @@ void CompactionCutoverUsesSuccessorRealtimeForPostBoundaryUpdates() {
   KV_INDEX_CHECK_EQ(row->value().Get<std::string>(2).value(), "routed");
 }
 
+void CompactionRejectsModesWithoutCompactDeltaLayer() {
+  auto layout = MakeLayout();
+  auto realtime = MakeRealtime(layout);
+  KV_INDEX_CHECK(realtime
+                     ->Publish(100, SourcePosition{.partition = 0, .offset = 1},
+                               MakeRow(*layout, 10, std::string("visible")))
+                     .ok());
+  ShardState state(0, 1,
+                   ShardState::Layers{.realtime_delta = realtime});
+
+  for (const ForwardIndexMode mode :
+       {ForwardIndexMode::kFullSnapshotOnly,
+        ForwardIndexMode::kFullSnapshotWithRealtimeDelta}) {
+    auto compact = BuildCompactedDeltaSnapshot(CompactionBuildRequest{
+        .state = state,
+        .boundary = realtime->CaptureCompactionBoundary(),
+        .mode = mode,
+    });
+    KV_INDEX_CHECK(!compact.ok());
+    KV_INDEX_CHECK_EQ(compact.status().code(),
+                      StatusCode::kFailedPrecondition);
+
+    auto successor = FinishDeltaCompaction(FinishDeltaCompactionRequest{
+        .previous = state,
+        .successor_generation = 2,
+        .successor_realtime = MakeRealtime(layout),
+        .compact_backing = BuildSnapshot(
+            layout, {{100, MakeRow(*layout, 10, std::string("compact"))}}),
+        .mode = mode,
+    });
+    KV_INDEX_CHECK(!successor.ok());
+    KV_INDEX_CHECK_EQ(successor.status().code(),
+                      StatusCode::kFailedPrecondition);
+  }
+}
+
 }  // namespace
 
 int main() {
   CompactionScansOnlyVisibleRowsAtBoundaryAndOverlaysOldCompact();
   CompactionCutoverUsesSuccessorRealtimeForPostBoundaryUpdates();
+  CompactionRejectsModesWithoutCompactDeltaLayer();
   return 0;
 }

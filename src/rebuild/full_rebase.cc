@@ -79,6 +79,10 @@ Status EnsurePreviousRealtimeIsEmpty(const runtime::ShardState& previous) {
 
 StatusOr<std::shared_ptr<const store::OwnedSnapshotBacking>> BuildRebasedFullSnapshot(
     const FullRebaseBuildRequest& request) {
+  if (!ForwardIndexModeUsesCompactDelta(request.mode)) {
+    return Status::FailedPrecondition(
+        "internal full rebase is disabled for forward index mode");
+  }
   if (request.external_async_load_active) {
     return Status::FailedPrecondition(
         "external async load is active; internal full rebase is deferred");
@@ -141,6 +145,10 @@ StatusOr<std::shared_ptr<const store::OwnedSnapshotBacking>> BuildRebasedFullSna
 
 StatusOr<std::shared_ptr<const runtime::ShardState>> FinishFullRebase(
     FinishFullRebaseRequest request) {
+  if (!ForwardIndexModeUsesCompactDelta(request.mode)) {
+    return Status::FailedPrecondition(
+        "internal full rebase is disabled for forward index mode");
+  }
   if (request.full_backing == nullptr) {
     return Status::InvalidArgument("rebased full backing is null");
   }

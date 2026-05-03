@@ -67,7 +67,7 @@ ForwardIndex::ForwardIndex(const ForwardIndexOptions& options)
     throw std::invalid_argument(
         "ForwardIndexOptions::shard_count must be a non-zero power of two");
   }
-  if (options_.mode == ForwardIndexMode::kFullSnapshotOnly &&
+  if (!ForwardIndexModeUsesKafkaRealtime(options_.mode) &&
       HasKafkaConsumerConfig(options_.kafka_consumer)) {
     throw std::invalid_argument(
         "full-snapshot-only mode does not accept Kafka consumer config");

@@ -25,6 +25,7 @@ using kv_index::FieldEncoding;
 using kv_index::FieldLayout;
 using kv_index::FieldSpec;
 using kv_index::FieldType;
+using kv_index::ForwardIndexMode;
 using kv_index::Row;
 using kv_index::RuntimeSchema;
 using kv_index::SourcePosition;
@@ -298,6 +299,40 @@ void FinishFullRebaseAllowsEmptyPreviousRealtime() {
   KV_INDEX_CHECK_EQ(full_only->value().Get<std::int32_t>(1).value(), 20);
 }
 
+void FullRebaseRejectsModesWithoutCompactDeltaLayer() {
+  auto layout = MakeLayout();
+  auto full = BuildSnapshot(
+      layout, {{200, MakeRow(*layout, 20, std::string("full-only"))}});
+  ShardState previous(
+      0, 1,
+      ShardState::Layers{
+          .full_snapshot = FullSnapshotView(full),
+      });
+
+  for (const ForwardIndexMode mode :
+       {ForwardIndexMode::kFullSnapshotOnly,
+        ForwardIndexMode::kFullSnapshotWithRealtimeDelta}) {
+    auto rebased = BuildRebasedFullSnapshot(FullRebaseBuildRequest{
+        .state = previous,
+        .mode = mode,
+    });
+    KV_INDEX_CHECK(!rebased.ok());
+    KV_INDEX_CHECK_EQ(rebased.status().code(),
+                      StatusCode::kFailedPrecondition);
+
+    auto successor = FinishFullRebase(FinishFullRebaseRequest{
+        .previous = previous,
+        .successor_generation = 2,
+        .rebase_realtime = MakeRealtime(layout),
+        .full_backing = full,
+        .mode = mode,
+    });
+    KV_INDEX_CHECK(!successor.ok());
+    KV_INDEX_CHECK_EQ(successor.status().code(),
+                      StatusCode::kFailedPrecondition);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -305,5 +340,6 @@ int main() {
   RebaseBuildsCompactOverlayFullAndCutoverKeepsRebaseRealtime();
   FinishFullRebaseRejectsVisiblePreviousRealtimeToAvoidDataLoss();
   FinishFullRebaseAllowsEmptyPreviousRealtime();
+  FullRebaseRejectsModesWithoutCompactDeltaLayer();
   return 0;
 }
