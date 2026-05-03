@@ -1,0 +1,9 @@
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_binary(
+    name = "kv_index_build_artifact",
+    srcs = ["src/kv_index_build_artifact.cc"],
+    deps = ["@kv_index//:kv_index_artifact_builder"],
+)

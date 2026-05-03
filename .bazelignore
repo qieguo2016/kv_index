@@ -3,3 +3,4 @@ bazel-bin
 bazel-out
 bazel-testlogs
 bazel-kv_index
+tools/offline

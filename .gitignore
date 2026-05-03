@@ -3,6 +3,7 @@
 /bazel-bin
 /bazel-out
 /bazel-testlogs
+/tools/offline/bazel-*
 
 # Local Bazel and tool configuration
 /.bazelrc.local

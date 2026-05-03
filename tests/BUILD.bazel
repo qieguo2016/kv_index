@@ -13,6 +13,7 @@ cc_library(
     ],
     includes = ["."],
     deps = [
+        "//:kv_index_artifact_builder",
         "//:kv_index_internal",
         "//:kv_index",
     ],
