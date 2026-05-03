@@ -219,6 +219,61 @@ std::size_t FieldTypeAlignment(FieldType type) noexcept {
   return 1;
 }
 
+std::string_view FieldEncodingConfigName(FieldEncoding encoding) noexcept {
+  switch (encoding) {
+    case FieldEncoding::kFixed:
+      return "fixed";
+    case FieldEncoding::kArena:
+      return "arena";
+    case FieldEncoding::kDictionary:
+    case FieldEncoding::kListDictionary:
+      return "dictionary";
+    case FieldEncoding::kElementDictionary:
+      return "element_dictionary";
+  }
+  return "unknown";
+}
+
+StatusOr<FieldEncoding> ParseFieldEncoding(std::string_view name, bool is_list,
+                                           FieldType type) {
+  if (name == "fixed") {
+    if (!is_list && type != FieldType::kString) {
+      return FieldEncoding::kFixed;
+    }
+    return Status::InvalidArgument(
+        "fixed encoding is only valid for scalar numeric and bool fields");
+  }
+
+  if (name == "arena") {
+    if (is_list || type == FieldType::kString) {
+      return FieldEncoding::kArena;
+    }
+    return Status::InvalidArgument(
+        "arena encoding is only valid for strings and lists");
+  }
+
+  if (name == "dictionary") {
+    if (is_list) {
+      return FieldEncoding::kListDictionary;
+    }
+    if (type == FieldType::kString) {
+      return FieldEncoding::kDictionary;
+    }
+    return Status::InvalidArgument(
+        "dictionary encoding is only valid for scalar strings and lists");
+  }
+
+  if (name == "element_dictionary") {
+    if (is_list && type == FieldType::kString) {
+      return FieldEncoding::kElementDictionary;
+    }
+    return Status::InvalidArgument(
+        "element_dictionary encoding is only valid for list<string> fields");
+  }
+
+  return Status::InvalidArgument("unknown field encoding");
+}
+
 Status RuntimeSchema::AddField(FieldSpec field) {
   if (FindField(field.field_id) != nullptr ||
       FindDeletedField(field.field_id) != nullptr) {

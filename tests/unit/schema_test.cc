@@ -12,6 +12,8 @@ using kv_index::CompiledRowLayout;
 using kv_index::FieldEncoding;
 using kv_index::FieldSpec;
 using kv_index::FieldType;
+using kv_index::FieldEncodingConfigName;
+using kv_index::ParseFieldEncoding;
 using kv_index::RuntimeSchema;
 using kv_index::StatusCode;
 
@@ -88,6 +90,48 @@ void RuntimeSchemaRejectsInvalidPoliciesAndEvolution() {
   KV_INDEX_CHECK(!schema.AddField(dict_int).ok());
 }
 
+void FieldEncodingConfigUsesUnifiedDictionarySpelling() {
+  const auto scalar_dictionary =
+      ParseFieldEncoding("dictionary", false, FieldType::kString);
+  KV_INDEX_CHECK(scalar_dictionary.ok());
+  KV_INDEX_CHECK_EQ(scalar_dictionary.value(), FieldEncoding::kDictionary);
+
+  const auto scalar_list_dictionary =
+      ParseFieldEncoding("dictionary", true, FieldType::kInt32);
+  KV_INDEX_CHECK(scalar_list_dictionary.ok());
+  KV_INDEX_CHECK_EQ(scalar_list_dictionary.value(),
+                    FieldEncoding::kListDictionary);
+
+  const auto string_list_dictionary =
+      ParseFieldEncoding("dictionary", true, FieldType::kString);
+  KV_INDEX_CHECK(string_list_dictionary.ok());
+  KV_INDEX_CHECK_EQ(string_list_dictionary.value(),
+                    FieldEncoding::kListDictionary);
+
+  const auto element_dictionary =
+      ParseFieldEncoding("element_dictionary", true, FieldType::kString);
+  KV_INDEX_CHECK(element_dictionary.ok());
+  KV_INDEX_CHECK_EQ(element_dictionary.value(),
+                    FieldEncoding::kElementDictionary);
+
+  KV_INDEX_CHECK_EQ(FieldEncodingConfigName(FieldEncoding::kDictionary),
+                    "dictionary");
+  KV_INDEX_CHECK_EQ(FieldEncodingConfigName(FieldEncoding::kListDictionary),
+                    "dictionary");
+
+  const auto legacy_list_dictionary =
+      ParseFieldEncoding("list_dictionary", true, FieldType::kInt32);
+  KV_INDEX_CHECK(!legacy_list_dictionary.ok());
+  KV_INDEX_CHECK_EQ(legacy_list_dictionary.status().code(),
+                    StatusCode::kInvalidArgument);
+
+  const auto scalar_int_dictionary =
+      ParseFieldEncoding("dictionary", false, FieldType::kInt32);
+  KV_INDEX_CHECK(!scalar_int_dictionary.ok());
+  KV_INDEX_CHECK_EQ(scalar_int_dictionary.status().code(),
+                    StatusCode::kInvalidArgument);
+}
+
 void CompiledLayoutIsDeterministicAndAligned() {
   RuntimeSchema schema(42);
   KV_INDEX_CHECK(schema.AddField(Scalar(30, "wide", FieldType::kInt64)).ok());
@@ -156,6 +200,7 @@ void DeletedFieldsDoNotAllocateRowStorage() {
 int main() {
   RuntimeSchemaTracksActiveAndDeletedFields();
   RuntimeSchemaRejectsInvalidPoliciesAndEvolution();
+  FieldEncodingConfigUsesUnifiedDictionarySpelling();
   CompiledLayoutIsDeterministicAndAligned();
   DeletedFieldsDoNotAllocateRowStorage();
   return 0;

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -124,6 +125,9 @@ class CompiledRowLayout {
 
 std::size_t FieldTypeSize(FieldType type) noexcept;
 std::size_t FieldTypeAlignment(FieldType type) noexcept;
+std::string_view FieldEncodingConfigName(FieldEncoding encoding) noexcept;
+StatusOr<FieldEncoding> ParseFieldEncoding(std::string_view name, bool is_list,
+                                           FieldType type);
 
 }  // namespace kv_index
 

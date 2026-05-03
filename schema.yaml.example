@@ -1,0 +1,123 @@
+# Template schema for full snapshot data files.
+# Keep this schema separate from the TSV data file so schema and data changes
+# can be reviewed independently.
+
+schema_version: 11
+
+primary_key:
+  name: record_id
+  type: uint64
+
+# Supported type values: int8, int32, int64, uint64, bool, string.
+# For list fields, type is the element type and is_list is true.
+#
+# Supported encoding values:
+# - fixed: scalar int8/int32/int64/uint64/bool fields
+# - arena: scalar string fields or list fields
+# - dictionary: scalar string fields, or whole-list dictionary for list fields
+# - element_dictionary: list<string> fields
+fields:
+  - field_id: 1
+    name: small_code
+    type: int8
+    is_list: false
+    nullable: false
+    encoding: fixed
+
+  - field_id: 2
+    name: score
+    type: int32
+    is_list: false
+    nullable: false
+    encoding: fixed
+
+  - field_id: 3
+    name: metric
+    type: int64
+    is_list: false
+    nullable: false
+    encoding: fixed
+
+  - field_id: 4
+    name: hash_value
+    type: uint64
+    is_list: false
+    nullable: false
+    encoding: fixed
+
+  - field_id: 5
+    name: is_enabled
+    type: bool
+    is_list: false
+    nullable: false
+    encoding: fixed
+
+  - field_id: 6
+    name: title
+    type: string
+    is_list: false
+    nullable: false
+    encoding: arena
+
+  - field_id: 7
+    name: codes_i8
+    type: int8
+    is_list: true
+    nullable: false
+    encoding: arena
+
+  - field_id: 8
+    name: counts_i32
+    type: int32
+    is_list: true
+    nullable: false
+    encoding: arena
+
+  - field_id: 9
+    name: metrics_i64
+    type: int64
+    is_list: true
+    nullable: false
+    encoding: arena
+
+  - field_id: 10
+    name: hashes_u64
+    type: uint64
+    is_list: true
+    nullable: false
+    encoding: arena
+
+  - field_id: 11
+    name: flags_bool
+    type: bool
+    is_list: true
+    nullable: false
+    encoding: arena
+
+  - field_id: 12
+    name: tags
+    type: string
+    is_list: true
+    nullable: false
+    encoding: arena
+
+  - field_id: 13
+    name: category
+    type: string
+    is_list: false
+    nullable: false
+    encoding: dictionary
+
+  - field_id: 14
+    name: ranked_counts_i32
+    type: int32
+    is_list: true
+    nullable: false
+    encoding: dictionary
+
+  - field_id: 15
+    name: normalized_tags
+    type: string
+    is_list: true
+    nullable: false
+    encoding: element_dictionary
