@@ -96,6 +96,17 @@ cc_test(
 )
 
 cc_test(
+    name = "full_snapshot_only_load_test",
+    srcs = ["unit/full_snapshot_only_load_test.cc"],
+    size = "small",
+    deps = [
+        ":test_support",
+        "//:kv_index_internal",
+        "//:kv_index",
+    ],
+)
+
+cc_test(
     name = "kafka_update_consumer_test",
     srcs = ["unit/kafka_update_consumer_test.cc"],
     size = "small",
@@ -376,6 +387,7 @@ test_suite(
         ":compaction_test",
         ":forward_index_unit_test",
         ":full_rebase_test",
+        ":full_snapshot_only_load_test",
         ":frozen_primary_key_index_test",
         ":kafka_update_consumer_test",
         ":lifetime_test",
@@ -420,6 +432,7 @@ test_suite(
         ":compaction_test",
         ":forward_index_unit_test",
         ":full_rebase_test",
+        ":full_snapshot_only_load_test",
         ":frozen_primary_key_index_test",
         ":kafka_update_consumer_test",
         ":lifetime_test",

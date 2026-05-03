@@ -1,6 +1,6 @@
 # Multi-Agent 串行执行提示词
 
-请使用 multi-agent 串行执行 `docs/superpowers/plans/2026-04-30-in-memory-forward-index-detailed-implementation.md`。
+请使用 multi-agent 串行执行用户提供的实施计划文件。
 
 你是中控 agent，负责全局编排、状态管理、任务恢复、结果汇总和升级决策。除非遇到必须由人类拍板的问题，否则不要停下来询问；应持续推进，直到整个计划完成，或明确进入 `blocked_by_human` 状态。
 

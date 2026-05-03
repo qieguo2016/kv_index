@@ -18,6 +18,8 @@ struct MmapSnapshotLoadOptions {
   std::uint32_t expected_shard_count = 0;
   std::uint64_t expected_hash_seed = 0;
   std::uint32_t expected_hash_version = 0;
+  ArtifactSourceProgressPolicy source_progress_policy =
+      ArtifactSourceProgressPolicy::kRequired;
 };
 
 class MmapSnapshotBacking final : public store::SnapshotBacking {

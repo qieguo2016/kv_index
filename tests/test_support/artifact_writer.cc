@@ -308,8 +308,9 @@ Status WriteTestArtifact(const std::string& path, const TestArtifactSpec& spec) 
   }
 
   std::vector<ArtifactSection> sections;
-  const std::uint32_t section_count =
-      static_cast<std::uint32_t>(2 + spec.shard_count * 7);
+  const std::uint32_t section_count = static_cast<std::uint32_t>(
+      1 + (spec.include_source_progress_section ? 1 : 0) +
+      spec.shard_count * 7);
   std::vector<std::byte> file(kArtifactHeaderSize +
                               section_count * kArtifactSectionEntrySize);
 
@@ -324,15 +325,17 @@ Status WriteTestArtifact(const std::string& path, const TestArtifactSpec& spec) 
     return status;
   }
 
-  auto progress = SerializeSourceProgress(spec.source_progress);
-  if (!progress.ok()) {
-    return progress.status();
-  }
-  if (const Status status =
-          AddSection(&file, &sections, ArtifactSectionType::kSourceProgress,
-                     kArtifactGlobalShardId, std::move(progress).value());
-      !status.ok()) {
-    return status;
+  if (spec.include_source_progress_section) {
+    auto progress = SerializeSourceProgress(spec.source_progress);
+    if (!progress.ok()) {
+      return progress.status();
+    }
+    if (const Status status =
+            AddSection(&file, &sections, ArtifactSectionType::kSourceProgress,
+                       kArtifactGlobalShardId, std::move(progress).value());
+        !status.ok()) {
+      return status;
+    }
   }
 
   for (const ArtifactShardSpec& shard : spec.shards) {

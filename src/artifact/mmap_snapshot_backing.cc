@@ -282,6 +282,7 @@ StatusOr<std::shared_ptr<MmapSnapshotBacking>> MmapSnapshotBacking::LoadShard(
                  .expected_shard_count = options.expected_shard_count,
                  .expected_hash_seed = options.expected_hash_seed,
                  .expected_hash_version = options.expected_hash_version,
+                 .source_progress_policy = options.source_progress_policy,
              });
   if (!parsed.ok()) {
     munmap(*mapping, mapping_size);

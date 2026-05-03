@@ -24,9 +24,10 @@ using kv_index::FieldType;
 using kv_index::Row;
 using kv_index::RuntimeSchema;
 using kv_index::StatusCode;
-using kv_index::store::FullSnapshotView;
+using kv_index::artifact::ArtifactSourceProgressPolicy;
 using kv_index::artifact::MmapSnapshotBacking;
 using kv_index::artifact::MmapSnapshotLoadOptions;
+using kv_index::store::FullSnapshotView;
 using kv_index::store::SnapshotBacking;
 using kv_index::test_support::ArtifactShardSpec;
 using kv_index::test_support::TestArtifactSpec;
@@ -161,11 +162,42 @@ void ExplicitPrewarmTouchesShardSectionsAndMarksReady() {
   KV_INDEX_CHECK_EQ((*backing)->prewarm_touched_pages_for_testing(), 7u);
 }
 
+void DefaultMmapLoadRejectsMissingSourceProgress() {
+  const std::string path = TempPath("mmap_snapshot_missing_progress.kvi");
+  auto spec = SpecWithOneRow();
+  spec.include_source_progress_section = false;
+  KV_INDEX_CHECK(WriteTestArtifact(path, spec).ok());
+
+  auto backing = MmapSnapshotBacking::LoadShard(path, 0, OptionsFor(spec));
+  KV_INDEX_CHECK(!backing.ok());
+  KV_INDEX_CHECK_EQ(backing.status().code(), StatusCode::kInvalidArgument);
+}
+
+void OptionalMmapLoadAcceptsMissingSourceProgress() {
+  const std::string path = TempPath("mmap_snapshot_optional_progress.kvi");
+  auto spec = SpecWithOneRow();
+  spec.include_source_progress_section = false;
+  KV_INDEX_CHECK(WriteTestArtifact(path, spec).ok());
+
+  auto options = OptionsFor(spec);
+  options.source_progress_policy = ArtifactSourceProgressPolicy::kOptional;
+  auto backing = MmapSnapshotBacking::LoadShard(path, 0, options);
+  KV_INDEX_CHECK(backing.ok());
+
+  FullSnapshotView view(*backing);
+  auto row = view.Get(42);
+  KV_INDEX_CHECK(row.ok());
+  KV_INDEX_CHECK(row->has_value());
+  KV_INDEX_CHECK_EQ(row->value().Get<std::int32_t>(1).value(), 88);
+}
+
 int Main() {
   LocalFileMappingServesRowsThroughFullSnapshotView();
   FileUriMappingAndViewOwnMappedLifetime();
   InvalidPathAndRemoteSchemeFailClosed();
   ExplicitPrewarmTouchesShardSectionsAndMarksReady();
+  DefaultMmapLoadRejectsMissingSourceProgress();
+  OptionalMmapLoadAcceptsMissingSourceProgress();
   return 0;
 }
 

@@ -1,9 +1,9 @@
 # Multi-Agent Controller Ledger
 
 ## Metadata
-- Current Date: 2026-04-30
-- Last Restored: 2026-04-30
-- Active Task: none; all planned work completed
+- Current Date: 2026-05-02
+- Last Restored: 2026-05-02 17:48:40 CST
+- Active Task: final FSO controller verification
 - Execution Mode: strict serial multi-agent
 - Branch: main
 
@@ -30,6 +30,17 @@
 | W07 | completed | W06 | 1 | docs/tasks/W07-compaction-full-rebase.md |
 | W08 | completed | W07 | 1 | docs/tasks/W08-observability-finalization.md |
 
+## Full Snapshot Only Mode Task Overview
+| Task | Status | Depends On | Retry Count | Task Document |
+| --- | --- | --- | --- | --- |
+| FSO01 | completed | none | 0 | docs/tasks/FSO01-public-mode-option.md |
+| FSO02 | completed | FSO01 | 0 | docs/tasks/FSO02-optional-source-progress-parsing.md |
+| FSO03 | completed | FSO02 | 0 | docs/tasks/FSO03-test-artifact-writer-support.md |
+| FSO04 | completed | FSO03 | 0 | docs/tasks/FSO04-full-only-async-load-branch.md |
+| FSO05 | completed | FSO04 | 0 | docs/tasks/FSO05-focused-full-only-behavior-tests.md |
+| FSO06 | completed | FSO05 | 0 | docs/tasks/FSO06-existing-mode-regressions.md |
+| FSO07 | completed | FSO06 | 0 | docs/tasks/FSO07-docs-and-final-verification.md |
+
 ## Completed Tasks
 - W00 Foundation And Build Layout
 - W01 Schema, Layout, Row Semantics, And Row Materialization Contract
@@ -41,10 +52,42 @@
 - W07 Delta Compaction And Internal Full Rebase
 - W08 Observability, Lifetime Verification, Integration, Benchmarks, And Docs
 
+## Full Snapshot Only Completed Tasks
+- FSO01 Public Mode Option
+- FSO02 Optional Source Progress Parsing
+- FSO03 Test Artifact Writer Support
+- FSO04 Full-Only Async Load Branch
+- FSO05 Focused Full-Only Behavior Tests
+- FSO06 Existing-Mode Regressions
+- FSO07 Docs And Final Verification
+
 ## Blocked By Human
 - None.
 
 ## Dispatch Log
+- 2026-05-02 17:48 CST: Restored controller for `docs/superpowers/plans/2026-05-02-full-snapshot-only-mode.md`. Existing W00-W08 work remains completed. Initialized strict serial FSO01-FSO07 task queue and selected FSO01 as the only active task because it has no dependencies.
+- 2026-05-02 17:49 CST: FSO01 plan agent completed planning and updated the task document to `ready_for_impl`. Controller reviewed required planning content and moved FSO01 to implementation.
+- 2026-05-02 17:51 CST: FSO01 coding agent completed implementation with TDD RED/GREEN notes and focused test passing. Controller reviewed the implementation log and moved FSO01 to independent verification.
+- 2026-05-02 17:55 CST: FSO01 verify agent returned `pass` after focused cached and uncached verification. Controller marked FSO01 completed and selected FSO02 because its dependency is satisfied.
+- 2026-05-02 17:56 CST: FSO02 plan agent completed planning and updated the task document to `ready_for_impl`. Controller reviewed parser-policy boundaries and moved FSO02 to implementation.
+- 2026-05-02 18:07 CST: FSO02 coding agent completed parser-policy implementation with focused RED/GREEN and uncached focused verification. Controller reviewed the implementation log and moved FSO02 to independent verification.
+- 2026-05-02 18:10 CST: FSO02 verify agent returned `pass` after scoped diff review and cached plus uncached artifact-format tests. Controller marked FSO02 completed and selected FSO03 because its dependency is satisfied.
+- 2026-05-02 18:11 CST: FSO03 plan agent completed planning and updated the task document to `ready_for_impl`. Controller reviewed writer-support boundaries and moved FSO03 to implementation.
+- 2026-05-02 18:17 CST: FSO03 coding agent completed shared writer option implementation with focused RED/GREEN, diff check, and uncached focused verification. Controller reviewed the implementation log and moved FSO03 to independent verification.
+- 2026-05-02 18:19 CST: FSO03 verify agent returned `pass` after scoped diff review, diff check, and cached plus uncached artifact-format tests. Controller marked FSO03 completed and selected FSO04 because its dependency is satisfied.
+- 2026-05-02 18:22 CST: FSO04 plan agent completed planning and updated the task document to `ready_for_impl`. Controller reviewed async-load branch boundaries and moved FSO04 to implementation.
+- 2026-05-02 18:29 CST: FSO04 coding agent completed mmap policy threading, full-only async-load branch, Bazel wiring, and first focused full-only load test with RED/GREEN and uncached verification. Controller reviewed the implementation log and moved FSO04 to independent verification.
+- 2026-05-02 18:33 CST: FSO04 verify agent returned `pass` after scoped diff review, diff check, and cached plus uncached full-only focused tests. Controller marked FSO04 completed and selected FSO05 because its dependency is satisfied.
+- 2026-05-02 18:34 CST: FSO05 plan agent completed planning and updated the task document to `ready_for_impl`. Controller reviewed focused behavior-test boundaries and moved FSO05 to implementation.
+- 2026-05-02 18:39 CST: FSO05 coding agent added focused full-only replacement, runtime-status, schema-cutover, and pinned-row lifetime tests. Focused cached and uncached tests passed without production source changes. Controller reviewed the implementation log and moved FSO05 to independent verification.
+- 2026-05-02 18:42 CST: FSO05 verify agent returned `pass` after direct coverage review, whitespace checks, and cached plus uncached full-only focused tests. Controller marked FSO05 completed and selected FSO06 because its dependency is satisfied.
+- 2026-05-02 18:43 CST: FSO06 plan agent completed planning and updated the task document to `ready_for_impl`. Controller reviewed default-mode regression boundaries and moved FSO06 to implementation.
+- 2026-05-02 18:47 CST: FSO06 coding agent added default-mode async-load and mmap source-progress regressions, plus strengthened caught-up catch-up running-state assertions. Focused cached and uncached tests passed. Controller reviewed the implementation log and moved FSO06 to independent verification.
+- 2026-05-02 18:50 CST: FSO06 verify agent returned `pass` after scoped diff review, whitespace checks, and cached plus uncached async-load/mmap focused tests. Controller marked FSO06 completed and selected FSO07 because its dependency is satisfied.
+- 2026-05-02 18:51 CST: FSO07 plan agent completed planning and updated the task document to `ready_for_impl`. Controller reviewed README and final-verification boundaries and moved FSO07 to implementation.
+- 2026-05-02 18:59 CST: FSO07 coding agent updated README serving-mode documentation and ran the required focused, aggregate, and full build commands successfully. Controller reviewed README/task logs and moved FSO07 to independent verification.
+- 2026-05-02 19:03 CST: FSO07 verify agent returned `pass` after README acceptance review, focused tests, aggregate suites, and `bazel build //...`. Controller marked FSO07 completed and moved to final FSO controller verification.
+- 2026-05-02 19:05 CST: Controller final sanity check passed: `git diff --check` exited 0; `bazel test //tests:unit_tests //tests:integration_tests //tests:smoke_tests` passed with 29/29 tests; `bazel build //...` completed successfully with 47 targets.
 - 2026-04-30: Initialized controller ledger from `docs/agent_prompt.md` and implementation plan. Selected W00 as the only active task because it has no dependencies.
 - 2026-04-30: W00 plan agent completed planning and updated the task document to `ready_for_impl`. Controller reviewed required planning content and moved W00 to implementation.
 - 2026-04-30: W00 coding agent completed implementation, updated the task document, and reported focused tests passing. Controller moved W00 to independent verification.
@@ -147,5 +190,4 @@
   verification results.
 
 ## Next Dispatch Decision
-- None. All planned tasks and final verification are complete after the
-  ledger-only final state commit.
+- None. FSO01-FSO07 and final controller-level sanity checks are complete.

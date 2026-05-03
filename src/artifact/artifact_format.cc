@@ -385,6 +385,11 @@ StatusOr<ParsedArtifact> ParseArtifact(std::span<const std::byte> bytes,
       artifact.FindSection(ArtifactSectionType::kSourceProgress,
                            kArtifactGlobalShardId);
   if (!progress_section.has_value()) {
+    if (options.source_progress_policy ==
+        ArtifactSourceProgressPolicy::kOptional) {
+      artifact.source_progress.clear();
+      return artifact;
+    }
     return Status::InvalidArgument("artifact source progress section missing");
   }
   auto progress = ParseSourceProgressSection(

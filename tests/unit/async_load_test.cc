@@ -398,6 +398,32 @@ void UnsafeSourceProgressGuardFailsClosedBeforeCutover() {
   KV_INDEX_CHECK(!index.Get(key).has_value());
 }
 
+void DefaultModeRejectsArtifactMissingSourceProgress() {
+  ForwardIndexOptions options;
+  options.shard_count = 2;
+  options.hash_seed = 17;
+  ForwardIndex index(options);
+  const std::uint64_t key = FindKeyForShard(index, 1);
+  const std::string path = TempPath("async_load_missing_source_progress.kvi");
+  auto spec = TwoShardSpec(options, key, 333, 5, 5);
+  spec.include_source_progress_section = false;
+  KV_INDEX_CHECK(WriteTestArtifact(path, spec).ok());
+
+  const kv_index::LoadId load_id = index.LoadAsync(LoadRequest{
+      .artifact_uri = path,
+      .artifact_id = spec.artifact_id,
+  });
+  WaitForTerminalState(index, load_id);
+  const kv_index::LoadState state = index.GetLoadState(load_id);
+
+  KV_INDEX_CHECK_NE(load_id, kv_index::kInvalidLoadId);
+  KV_INDEX_CHECK_EQ(state.code, LoadStateCode::kFailed);
+  KV_INDEX_CHECK(state.terminal);
+  KV_INDEX_CHECK_EQ(state.loaded_shard_count, 0U);
+  KV_INDEX_CHECK_EQ(state.cutover_shard_count, 0U);
+  KV_INDEX_CHECK(!index.Get(key).has_value());
+}
+
 void LoadAsyncReturnsWhileCatchUpIsStillRunningAndReadsContinue() {
   ForwardIndexOptions options;
   options.shard_count = 2;
@@ -562,7 +588,9 @@ void CatchUpCapturesPostStartSafeWatermarkEvenWhenArtifactLooksCaughtUp() {
   });
   WaitForPollCalls(control, 1);
 
-  KV_INDEX_CHECK_EQ(index.GetLoadState(load_id).code, LoadStateCode::kRunning);
+  const kv_index::LoadState running = index.GetLoadState(load_id);
+  KV_INDEX_CHECK_EQ(running.code, LoadStateCode::kRunning);
+  KV_INDEX_CHECK(!running.terminal);
   KV_INDEX_CHECK(!index.Get(key).has_value());
 
   ReleaseCatchUp(control);
@@ -656,6 +684,7 @@ int Main() {
   InvalidPathRemainsTerminalFailedWithRicherState();
   HashOrShardMismatchFailsClosedWithoutPublishing();
   UnsafeSourceProgressGuardFailsClosedBeforeCutover();
+  DefaultModeRejectsArtifactMissingSourceProgress();
   LoadAsyncReturnsWhileCatchUpIsStillRunningAndReadsContinue();
   CancellationBeforeCutoverPreventsPublish();
   CatchUpStartsAtArtifactCheckpointAndAdvancesToSafeWatermark();

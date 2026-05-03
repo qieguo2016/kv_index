@@ -30,14 +30,32 @@ bazel build //tests:get_benchmark //tests:mget_benchmark \
   //tests:realtime_delta_benchmark //tests:snapshot_decode_benchmark
 ```
 
+## Serving Modes
+
+`ForwardIndexOptions::mode` selects the serving mode at construction time.
+
+- `ForwardIndexMode::kRealtimeDelta` is the default mode. Reads apply whole-row
+  layer precedence: `realtime_delta -> compact_delta -> full_snapshot`. There
+  is no field-level merge between layers.
+- `ForwardIndexMode::kFullSnapshotOnly` reads only full snapshots published by
+  explicit async full-artifact loads through `LoadAsync`. It rejects any
+  non-empty Kafka consumer config at construction time.
+- `kFullSnapshotOnly` does not use Kafka updates, realtime deltas, delta
+  compaction, or internal full rebase.
+- `kFullSnapshotOnly` allows full artifacts without a `kSourceProgress` section.
+  If a `kSourceProgress` section is present but malformed, artifact parsing
+  still fails closed.
+- Full-snapshot-only async cutover publishes shards one at a time; it is not a
+  global all-shard atomic version switch.
+
 ## Implemented V1 Surface
 
 - `ForwardIndexOptions` defaults to `shard_count = 128` and `hash_version = 1`.
   Shard count must be a non-zero power of two.
 - `ForwardIndex::Get` and `ForwardIndex::MGet` read pinned shard generations.
   `MGet` preserves input order, duplicates, and misses across shards.
-- Reads apply whole-row layer precedence: realtime delta, then compact delta,
-  then full snapshot. There is no field-level merge between layers.
+- In default `kRealtimeDelta` mode, reads apply whole-row layer precedence:
+  `realtime_delta -> compact_delta -> full_snapshot`.
 - Local/file artifact loading is available through `LoadAsync`,
   `GetLoadState`, and `CancelLoad`. Load state reports shard load, prewarm,
   cutover progress, source progress, terminal state, and last error.

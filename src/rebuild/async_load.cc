@@ -312,6 +312,10 @@ Status RunExternalArtifactLoad(const LoadRequest& request, LoadId id,
       .expected_shard_count = options.shard_count,
       .expected_hash_seed = options.hash_seed,
       .expected_hash_version = options.hash_version,
+      .source_progress_policy =
+          options.mode == ForwardIndexMode::kFullSnapshotOnly
+              ? artifact::ArtifactSourceProgressPolicy::kOptional
+              : artifact::ArtifactSourceProgressPolicy::kRequired,
   };
   std::vector<std::shared_ptr<artifact::MmapSnapshotBacking>> backings;
   backings.reserve(options.shard_count);
@@ -358,6 +362,40 @@ Status RunExternalArtifactLoad(const LoadRequest& request, LoadId id,
     state->shards[shard_id].prewarmed = true;
     ++state->prewarmed_shard_count;
     StoreState(callbacks, *state);
+  }
+
+  if (options.mode == ForwardIndexMode::kFullSnapshotOnly) {
+    state->source_progress.partitions.clear();
+    for (std::uint32_t shard_id = 0; shard_id < options.shard_count;
+         ++shard_id) {
+      if (const Status status = CheckCancelled(callbacks, state);
+          !status.ok()) {
+        return status;
+      }
+      auto full_backing = std::static_pointer_cast<const store::SnapshotBacking>(
+          backings[shard_id]);
+      auto shard_state = std::make_shared<const runtime::ShardState>(
+          shard_id, id,
+          runtime::ShardState::Layers{
+              .full_snapshot = store::FullSnapshotView(std::move(full_backing)),
+          });
+      const Status status =
+          callbacks.publish_shard(shard_id, std::move(shard_state));
+      if (!status.ok()) {
+        MarkFailed(state, status);
+        StoreState(callbacks, *state);
+        return status;
+      }
+      state->shards[shard_id].cutover = true;
+      ++state->cutover_shard_count;
+      StoreState(callbacks, *state);
+    }
+
+    state->code = LoadStateCode::kSucceeded;
+    state->terminal = true;
+    state->message = "artifact load succeeded";
+    StoreState(callbacks, *state);
+    return Status::Ok();
   }
 
   const KafkaProgress artifact_progress =

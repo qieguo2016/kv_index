@@ -49,6 +49,11 @@ Status PreflightLocalArtifactUri(const LoadRequest& request) {
   return Status::Ok();
 }
 
+bool HasKafkaConsumerConfig(const KafkaConsumerConfig& config) {
+  return !config.bootstrap_servers.empty() || !config.group_id.empty() ||
+         !config.topics.empty();
+}
+
 }  // namespace
 
 bool IsPowerOfTwo(std::uint32_t value) noexcept {
@@ -60,6 +65,11 @@ ForwardIndex::ForwardIndex(const ForwardIndexOptions& options)
   if (!IsPowerOfTwo(options_.shard_count)) {
     throw std::invalid_argument(
         "ForwardIndexOptions::shard_count must be a non-zero power of two");
+  }
+  if (options_.mode == ForwardIndexMode::kFullSnapshotOnly &&
+      HasKafkaConsumerConfig(options_.kafka_consumer)) {
+    throw std::invalid_argument(
+        "full-snapshot-only mode does not accept Kafka consumer config");
   }
   shard_directory_ =
       std::make_unique<runtime::ShardDirectory>(

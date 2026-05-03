@@ -37,6 +37,7 @@ struct TestArtifactSpec {
   std::uint64_t hash_seed = 0;
   std::uint32_t hash_version = 1;
   std::shared_ptr<const CompiledRowLayout> layout;
+  bool include_source_progress_section = true;
   std::vector<TestSourceProgress> source_progress;
   std::vector<ArtifactShardSpec> shards;
 };

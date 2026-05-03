@@ -28,6 +28,7 @@ using kv_index::FieldLayout;
 using kv_index::FieldSpec;
 using kv_index::FieldType;
 using kv_index::ForwardIndex;
+using kv_index::ForwardIndexMode;
 using kv_index::ForwardIndexOptions;
 using kv_index::RuntimeSchema;
 using kv_index::store::CompactDeltaSnapshot;
@@ -142,6 +143,59 @@ void DefaultOptionsMatchDesign() {
   KV_INDEX_CHECK_EQ(options.shard_count, 128U);
   KV_INDEX_CHECK_EQ(options.hash_version, 1U);
   KV_INDEX_CHECK(!kv_index::VersionString().empty());
+}
+
+void DefaultModeRemainsRealtimeDelta() {
+  const ForwardIndexOptions options;
+
+  KV_INDEX_CHECK_EQ(options.mode, ForwardIndexMode::kRealtimeDelta);
+}
+
+void FullSnapshotOnlyModeAllowsEmptyKafkaConfig() {
+  ForwardIndexOptions options;
+  options.mode = ForwardIndexMode::kFullSnapshotOnly;
+
+  const ForwardIndex index(options);
+
+  KV_INDEX_CHECK_EQ(index.options().mode, ForwardIndexMode::kFullSnapshotOnly);
+}
+
+void FullSnapshotOnlyModeRejectsKafkaConfig() {
+  {
+    ForwardIndexOptions options;
+    options.mode = ForwardIndexMode::kFullSnapshotOnly;
+    options.kafka_consumer.bootstrap_servers = "localhost:9092";
+    KV_INDEX_CHECK_THROWS(
+        [&] {
+          ForwardIndex index(options);
+          (void)index;
+        }(),
+        std::invalid_argument);
+  }
+
+  {
+    ForwardIndexOptions options;
+    options.mode = ForwardIndexMode::kFullSnapshotOnly;
+    options.kafka_consumer.group_id = "reader";
+    KV_INDEX_CHECK_THROWS(
+        [&] {
+          ForwardIndex index(options);
+          (void)index;
+        }(),
+        std::invalid_argument);
+  }
+
+  {
+    ForwardIndexOptions options;
+    options.mode = ForwardIndexMode::kFullSnapshotOnly;
+    options.kafka_consumer.topics = {"updates"};
+    KV_INDEX_CHECK_THROWS(
+        [&] {
+          ForwardIndex index(options);
+          (void)index;
+        }(),
+        std::invalid_argument);
+  }
 }
 
 void RejectsInvalidShardCounts() {
@@ -271,6 +325,9 @@ void PublicGetThrowsOnInternalShardStatus() {
 
 int main() {
   DefaultOptionsMatchDesign();
+  DefaultModeRemainsRealtimeDelta();
+  FullSnapshotOnlyModeAllowsEmptyKafkaConfig();
+  FullSnapshotOnlyModeRejectsKafkaConfig();
   RejectsInvalidShardCounts();
   StableShardAssignmentIsBoundedAndRepeatable();
   StableHashGoldenValuesRemainStable();

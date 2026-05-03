@@ -5,12 +5,15 @@
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
 #include "kv_index/schema.h"
 #include "kv_index/status.h"
+#include "src/base/byte_io.h"
 #include "src/model/row_storage.h"
 #include "tests/test_support/artifact_writer.h"
 #include "tests/test_support/test_macros.h"
@@ -24,14 +27,28 @@ using kv_index::FieldEncoding;
 using kv_index::FieldSpec;
 using kv_index::FieldType;
 using kv_index::RuntimeSchema;
+using kv_index::Status;
 using kv_index::StatusCode;
+using kv_index::artifact::ArtifactSourceProgressPolicy;
 using kv_index::artifact::ArtifactSectionType;
 using kv_index::artifact::ArtifactValidationOptions;
+using kv_index::artifact::Fnv1a64;
+using kv_index::artifact::kArtifactGlobalShardId;
+using kv_index::artifact::kArtifactHeaderSize;
+using kv_index::artifact::kArtifactSectionEntrySize;
 using kv_index::artifact::ParseArtifact;
+using kv_index::base::ReadLittleEndian;
+using kv_index::base::WriteLittleEndian;
 using kv_index::test_support::ArtifactShardSpec;
 using kv_index::test_support::TestArtifactSpec;
 using kv_index::test_support::TestSourceProgress;
 using kv_index::test_support::WriteTestArtifact;
+
+constexpr std::size_t kEntryTypeOffset = 0;
+constexpr std::size_t kEntryShardIdOffset = 4;
+constexpr std::size_t kEntryFileOffsetOffset = 8;
+constexpr std::size_t kEntryLengthOffset = 16;
+constexpr std::size_t kEntryChecksumOffset = 24;
 
 std::string TempPath(const std::string& name) {
   const char* tmpdir = std::getenv("TEST_TMPDIR");
@@ -106,6 +123,60 @@ std::vector<std::byte> ReadFile(const std::string& path) {
   return bytes;
 }
 
+Status ValidateSecondSectionIsSourceProgress(std::span<const std::byte> bytes) {
+  const std::size_t source_entry_offset =
+      kArtifactHeaderSize + kArtifactSectionEntrySize;
+  auto source_type =
+      ReadLittleEndian<std::uint32_t>(bytes,
+                                      source_entry_offset + kEntryTypeOffset);
+  auto source_shard_id = ReadLittleEndian<std::uint32_t>(
+      bytes, source_entry_offset + kEntryShardIdOffset);
+  if (!source_type.ok() || !source_shard_id.ok()) {
+    return Status::InvalidArgument("source progress directory entry truncated");
+  }
+  if (*source_type !=
+          static_cast<std::uint32_t>(ArtifactSectionType::kSourceProgress) ||
+      *source_shard_id != kArtifactGlobalShardId) {
+    return Status::InvalidArgument(
+        "second artifact section is not source progress");
+  }
+  return Status::Ok();
+}
+
+Status MakeSourceProgressTopicLengthInvalid(std::vector<std::byte>* bytes) {
+  if (const Status status = ValidateSecondSectionIsSourceProgress(*bytes);
+      !status.ok()) {
+    return status;
+  }
+  const std::size_t source_entry_offset =
+      kArtifactHeaderSize + kArtifactSectionEntrySize;
+  auto source_offset = ReadLittleEndian<std::uint64_t>(
+      *bytes, source_entry_offset + kEntryFileOffsetOffset);
+  auto source_length = ReadLittleEndian<std::uint64_t>(
+      *bytes, source_entry_offset + kEntryLengthOffset);
+  if (!source_offset.ok() || !source_length.ok()) {
+    return Status::InvalidArgument("source progress section entry truncated");
+  }
+  if (*source_offset > bytes->size() ||
+      bytes->size() - static_cast<std::size_t>(*source_offset) <
+          *source_length ||
+      *source_length < 2 * sizeof(std::uint32_t)) {
+    return Status::InvalidArgument("source progress section out of bounds");
+  }
+  if (const Status status = WriteLittleEndian<std::uint32_t>(
+          std::numeric_limits<std::uint32_t>::max(),
+          std::span<std::byte>(*bytes),
+          *source_offset + sizeof(std::uint32_t));
+      !status.ok()) {
+    return status;
+  }
+  const std::uint64_t checksum = Fnv1a64(std::span<const std::byte>(
+      bytes->data() + *source_offset, *source_length));
+  return WriteLittleEndian<std::uint64_t>(
+      checksum, std::span<std::byte>(*bytes),
+      source_entry_offset + kEntryChecksumOffset);
+}
+
 void ValidTinyArtifactParsesMetadataSectionsAndProgress() {
   const std::string path = TempPath("artifact_format_valid.kvi");
   const auto spec = ValidSpec();
@@ -131,6 +202,73 @@ void ValidTinyArtifactParsesMetadataSectionsAndProgress() {
   KV_INDEX_CHECK(parsed->FindSection(ArtifactSectionType::kFrozenPrimaryKeyIndex,
                                      0)
                      .has_value());
+}
+
+void MissingSourceProgressRejectedByDefault() {
+  const std::string path =
+      TempPath("artifact_format_missing_progress_default.kvi");
+  auto spec = ValidSpec();
+  spec.include_source_progress_section = false;
+  KV_INDEX_CHECK(WriteTestArtifact(path, spec).ok());
+
+  auto parsed = ParseArtifact(
+      ReadFile(path),
+      ArtifactValidationOptions{.expected_shard_count = spec.shard_count,
+                                .expected_hash_seed = spec.hash_seed,
+                                .expected_hash_version = spec.hash_version});
+
+  KV_INDEX_CHECK(!parsed.ok());
+  KV_INDEX_CHECK_EQ(parsed.status().code(), StatusCode::kInvalidArgument);
+}
+
+void MissingSourceProgressAllowedWhenOptional() {
+  const std::string path =
+      TempPath("artifact_format_missing_progress_optional.kvi");
+  auto spec = ValidSpec();
+  spec.include_source_progress_section = false;
+  KV_INDEX_CHECK(WriteTestArtifact(path, spec).ok());
+
+  auto parsed = ParseArtifact(
+      ReadFile(path),
+      ArtifactValidationOptions{
+          .expected_shard_count = spec.shard_count,
+          .expected_hash_seed = spec.hash_seed,
+          .expected_hash_version = spec.hash_version,
+          .source_progress_policy = ArtifactSourceProgressPolicy::kOptional});
+
+  KV_INDEX_CHECK(parsed.ok());
+  KV_INDEX_CHECK_EQ(parsed->artifact_id, spec.artifact_id);
+  KV_INDEX_CHECK_EQ(parsed->shard_count, spec.shard_count);
+  KV_INDEX_CHECK_EQ(parsed->hash_seed, spec.hash_seed);
+  KV_INDEX_CHECK_EQ(parsed->hash_version, spec.hash_version);
+  KV_INDEX_CHECK(parsed->layout != nullptr);
+  KV_INDEX_CHECK(parsed->source_progress.empty());
+  KV_INDEX_CHECK(!parsed->FindSection(ArtifactSectionType::kSourceProgress,
+                                      kArtifactGlobalShardId)
+                      .has_value());
+  KV_INDEX_CHECK(parsed->FindSection(ArtifactSectionType::kFrozenPrimaryKeyIndex,
+                                     0)
+                     .has_value());
+}
+
+void MalformedSourceProgressRejectedEvenWhenOptional() {
+  const std::string path =
+      TempPath("artifact_format_malformed_progress_optional.kvi");
+  const auto spec = ValidSpec();
+  KV_INDEX_CHECK(WriteTestArtifact(path, spec).ok());
+  auto bytes = ReadFile(path);
+  KV_INDEX_CHECK(MakeSourceProgressTopicLengthInvalid(&bytes).ok());
+
+  auto parsed = ParseArtifact(
+      bytes, ArtifactValidationOptions{
+                 .expected_shard_count = spec.shard_count,
+                 .expected_hash_seed = spec.hash_seed,
+                 .expected_hash_version = spec.hash_version,
+                 .source_progress_policy =
+                     ArtifactSourceProgressPolicy::kOptional});
+
+  KV_INDEX_CHECK(!parsed.ok());
+  KV_INDEX_CHECK_EQ(parsed.status().code(), StatusCode::kInvalidArgument);
 }
 
 void BadMagicAndVersionAreRejected() {
@@ -209,6 +347,9 @@ void ShardAndHashMismatchesAreRejected() {
 
 int Main() {
   ValidTinyArtifactParsesMetadataSectionsAndProgress();
+  MissingSourceProgressRejectedByDefault();
+  MissingSourceProgressAllowedWhenOptional();
+  MalformedSourceProgressRejectedEvenWhenOptional();
   BadMagicAndVersionAreRejected();
   OverlappingAndOutOfBoundsSectionsAreRejected();
   SectionChecksumFailuresAreRejected();
